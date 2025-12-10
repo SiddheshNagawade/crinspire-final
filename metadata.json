@@ -1,0 +1,5 @@
+{
+  "name": "routing Crinspire Exam Simulator",
+  "description": "A comprehensive exam simulation platform mimicking the official UCEED interface. Features an Admin panel for paper creation and a Student interface for taking exams with real-time timers, question palettes, and specific question types (NAT, MSQ, MCQ).",
+  "requestFramePermissions": []
+}
