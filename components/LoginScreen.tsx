@@ -1,16 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Lock, Mail, User, BookOpen, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { authenticateInstructor } from '../utils/adminAuth';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext, useLocation } from 'react-router-dom';
 
 
 const LoginScreen: React.FC = () => {
     const navigate = useNavigate();
+    const location = useLocation();
     const { handleInstructorLogin, handleStudentLogin } = useOutletContext<any>();
   
     const [activeTab, setActiveTab] = useState<'STUDENT' | 'INSTRUCTOR'>('STUDENT');
-    const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>('LOGIN');
+    const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD'>(() => {
+      // Check if location.state has authMode set to REGISTER
+      const state = location.state as any;
+      return state?.authMode === 'REGISTER' ? 'REGISTER' : 'LOGIN';
+    });
 
     // Instructor State
     const [iEmail, setIEmail] = useState('');

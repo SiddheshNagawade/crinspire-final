@@ -52,6 +52,7 @@ const HomePage: React.FC = () => {
   const [howItWorksVisible, setHowItWorksVisible] = useState(false);
 
   const onLogin = () => navigate('/login');
+  const onSignUp = () => navigate('/login', { state: { authMode: 'REGISTER' } });
   const onPricing = () => navigate('/pricing');
   const onGetStarted = () => navigate('/login');
   const onDashboard = () => {
@@ -150,7 +151,7 @@ const HomePage: React.FC = () => {
               Login
             </button>
             <button 
-              onClick={onLogin}
+              onClick={onSignUp}
               className="px-5 py-2.5 text-sm font-bold bg-[#8AA624] text-white rounded-lg hover:bg-[#728a1d] shadow-md transition-all hover:-translate-y-0.5 hover:shadow-lg"
             >
               Sign Up
@@ -514,7 +515,7 @@ const HomePage: React.FC = () => {
                </p>
                
                <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                   <button onClick={onLogin} className="group px-8 py-4 bg-[#1F2937] text-white rounded-xl font-bold text-lg hover:bg-[#000] transition-colors flex items-center justify-center shadow-lg hover:shadow-xl hover:-translate-y-1">
+                   <button onClick={onSignUp} className="group px-8 py-4 bg-[#1F2937] text-white rounded-xl font-bold text-lg hover:bg-[#000] transition-colors flex items-center justify-center shadow-lg hover:shadow-xl hover:-translate-y-1">
                       Sign Up Now 
                       <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" size={20}/>
                    </button>

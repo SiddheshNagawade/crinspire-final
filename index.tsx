@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import App from './App';
 import HomePage from './components/HomePage';
 import PricingPage from './components/PricingPage';
@@ -13,7 +14,7 @@ import AdminPanel from './components/AdminPanel';
 
 const container = document.getElementById('root');
 if (!container) {
-  throw new Error("Could not find root element to mount to");
+  throw new Error('Could not find root element to mount to');
 }
 const root = createRoot(container);
 
@@ -33,6 +34,7 @@ root.render(
           <Route path="*" element={<h1>404 Not Found</h1>} />
         </Route>
       </Routes>
+      <Analytics />
     </BrowserRouter>
   </React.StrictMode>
 );

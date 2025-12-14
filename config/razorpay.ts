@@ -3,9 +3,7 @@
 // Secret key is NOT included here for security
 
 export const RAZORPAY_CONFIG = {
-  keyId: 'rzp_live_RpqkWtha2RHs0K',
-  // For production, use environment variables
-  // keyId: import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_live_RpqkWtha2RHs0K',
+  keyId: import.meta.env.VITE_RAZORPAY_KEY_ID || '',
 };
 
 // Subscription plans - customize as needed

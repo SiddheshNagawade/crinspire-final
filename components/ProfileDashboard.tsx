@@ -6,10 +6,11 @@ import {
   Settings, Moon, Bell, Shield, 
   ChevronRight, X,
   BookOpen, Clock, ArrowDownUp, HelpCircle,
-  BarChart2, Flame, Target
+  BarChart2, Flame, Target, Check
 } from 'lucide-react';
 import { ExamPaper, UserAttempt } from '../types';
 import { supabase } from '../supabaseClient';
+import { fetchCompletedExams } from '../utils/examUtils';
 import SkeletonLoader from './SkeletonLoader';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 
@@ -39,9 +40,18 @@ const ProfileDashboard: React.FC = () => {
 
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [sortOrder, setSortOrder] = useState<'NEWEST' | 'OLDEST'>('NEWEST');
+  const [completedExamIds, setCompletedExamIds] = useState<Set<string>>(new Set());
 
   const [editForm, setEditForm] = useState({ fullName: studentDetails.name, age: studentDetails.age || '' });
   const [savingProfile, setSavingProfile] = useState(false);
+
+  useEffect(() => {
+    const loadCompletedExams = async () => {
+      const completed = await fetchCompletedExams();
+      setCompletedExamIds(completed);
+    };
+    loadCompletedExams();
+  }, []);
 
   useEffect(() => {
     const fetchAttempts = async () => {
@@ -240,6 +250,7 @@ const ProfileDashboard: React.FC = () => {
              ) : (
                  filteredExams.map((exam: ExamPaper) => {
                      const isLocked = subscription === 'FREE' && exam.isPremium;
+                     const isCompleted = completedExamIds.has(exam.id);
                      return (
                         <div 
                             key={exam.id}
@@ -250,6 +261,13 @@ const ProfileDashboard: React.FC = () => {
                                 : 'border-gray-200 hover:border-gray-300 hover:shadow-md cursor-pointer'}`}
                         >
                             {!isLocked && <div className="absolute top-0 left-0 w-1 h-full bg-[#8AA624] opacity-0 group-hover:opacity-100 transition-opacity"></div>}
+                            
+                            {/* Completion Tick in Top Right */}
+                            {isCompleted && (
+                                <div className="absolute top-3 right-3 bg-[#8AA624] rounded p-1">
+                                    <Check size={16} className="text-white" strokeWidth={3} />
+                                </div>
+                            )}
                             
                             {isLocked && (
                                 <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center p-4 text-center">

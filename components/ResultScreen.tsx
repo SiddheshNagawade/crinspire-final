@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { QuestionType } from '../types';
 import { ArrowLeft, CheckCircle, XCircle, MinusCircle, BarChart2, PieChart, Target } from 'lucide-react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
+import { markExamAsCompleted } from '../utils/examUtils';
 
 interface CategoryAnalysis {
   name: string;
@@ -17,6 +18,15 @@ const ResultScreen: React.FC = () => {
   
   const exam = exams.find((e: any) => e.id === selectedExamId);
   const responses = sessionResponses;
+
+  // Mark exam as completed when result screen is shown
+  useEffect(() => {
+    if (selectedExamId) {
+      markExamAsCompleted(selectedExamId).catch(err => 
+        console.error('Failed to mark exam as completed:', err)
+      );
+    }
+  }, [selectedExamId]);
 
   if (!exam) {
       return (
