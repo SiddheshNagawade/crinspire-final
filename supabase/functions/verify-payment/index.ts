@@ -86,12 +86,27 @@ serve(async (req) => {
         expiryDate.setMonth(expiryDate.getMonth() + 1);
       }
 
-      // Insert subscription row (service role) — trigger will update profiles
+      // Insert subscription row (service role)
       const { error: insertErr } = await supabaseAdmin
         .from('subscriptions')
         .insert([{ user_id: userId, tier: lowerPlan, price: price || 0, start_date: startDate.toISOString(), end_date: expiryDate.toISOString() }]);
 
       if (insertErr) throw insertErr;
+
+      // Immediately update profiles table to mark user as premium
+      const { error: updateErr } = await supabaseAdmin
+        .from('profiles')
+        .update({
+          is_premium: true,
+          subscription_start_date: startDate.toISOString(),
+          subscription_expiry_date: expiryDate.toISOString(),
+        })
+        .eq('id', userId);
+
+      if (updateErr) {
+        console.error('Failed to update profiles:', updateErr);
+        throw updateErr;
+      }
 
       return new Response(JSON.stringify({ 
         success: true,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2 } from 'lucide-react';
-import { Question, QuestionType, Section, ExamPaper } from '../types';
+import { Question, QuestionOption, QuestionType, Section, ExamPaper } from '../types';
+import { getMSQPreview } from '../utils/msq';
 import LoadingScreen from './LoadingScreen';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 
@@ -77,7 +78,13 @@ const AdminPanel: React.FC = () => {
             type: QuestionType.NAT,
             marks: 4,
             negativeMarks: 0,
-            options: [],
+                        options: [],
+                        optionDetails: [0,1,2,3].map((i) => ({
+                            id: `${tempId}-opt-${i}`,
+                            type: 'text',
+                            text: '',
+                            isCorrect: false,
+                        } as QuestionOption)),
             correctAnswer: '',
             category: ''
         }
@@ -113,6 +120,177 @@ const AdminPanel: React.FC = () => {
     setSections(newSections);
   };
 
+    const ensureOptionDetails = (sectionIndex: number, questionIndex: number) => {
+        const newSections = [...sections];
+        const sectionToUpdate = { ...newSections[sectionIndex] };
+        const questionsToUpdate = [...sectionToUpdate.questions];
+        const q = { ...questionsToUpdate[questionIndex] };
+        if (!q.optionDetails || q.optionDetails.length === 0) {
+            const baseId = `${q.id || 'q'}-opt-${Date.now()}`;
+            q.optionDetails = [0, 1, 2, 3].map((i) => ({
+                id: `${baseId}-${i}`,
+                type: 'text',
+                text: '',
+                isCorrect: i === 0,
+            } as QuestionOption));
+            if (q.type === QuestionType.MSQ) {
+                q.correctAnswer = ['A'];
+            } else if (q.type === QuestionType.MCQ) {
+                q.correctAnswer = 'A';
+            }
+        }
+        questionsToUpdate[questionIndex] = q;
+        sectionToUpdate.questions = questionsToUpdate;
+        newSections[sectionIndex] = sectionToUpdate;
+        setSections(newSections);
+    };
+
+    const deriveCorrectAnswers = (optionDetails: QuestionOption[]) =>
+        optionDetails
+            .map((opt, idx) => (opt.isCorrect ? String.fromCharCode(65 + idx) : null))
+            .filter(Boolean) as string[];
+
+    const setQuestionType = (sectionIndex: number, questionIndex: number, nextType: QuestionType) => {
+        // Functional update so we don't fight other state setters fired in the same tick
+        setSections((prev) => {
+            const newSections = [...prev];
+            const sectionToUpdate = { ...newSections[sectionIndex] };
+            const questionsToUpdate = [...sectionToUpdate.questions];
+            const existing = { ...questionsToUpdate[questionIndex] };
+
+            const q: Question = { ...existing, type: nextType };
+
+            // Seed options for choice questions and align correctness flags
+            if (nextType === QuestionType.MSQ || nextType === QuestionType.MCQ) {
+                if (!q.optionDetails || q.optionDetails.length === 0) {
+                    const baseId = `${q.id || 'q'}-opt-${Date.now()}`;
+                    q.optionDetails = [0, 1, 2, 3].map((i) => ({
+                        id: `${baseId}-${i}`,
+                        type: 'text',
+                        text: '',
+                        isCorrect: i === 0,
+                    } as QuestionOption));
+                }
+
+                if (nextType === QuestionType.MSQ) {
+                    q.correctAnswer = deriveCorrectAnswers(q.optionDetails || []);
+                } else {
+                    let correctIdx = (q.optionDetails || []).findIndex((o) => o.isCorrect);
+                    if (correctIdx < 0) correctIdx = 0;
+                    q.optionDetails = (q.optionDetails || []).map((opt, idx) => ({ ...opt, isCorrect: idx === correctIdx }));
+                    q.correctAnswer = q.optionDetails.length ? String.fromCharCode(65 + correctIdx) : '';
+                }
+            } else {
+                // Reset answer shape for NAT
+                if (Array.isArray(q.correctAnswer)) q.correctAnswer = '';
+            }
+
+            questionsToUpdate[questionIndex] = q;
+            sectionToUpdate.questions = questionsToUpdate;
+            newSections[sectionIndex] = sectionToUpdate;
+            return newSections;
+        });
+    };
+
+    const updateOptionField = (sectionIndex: number, questionIndex: number, optionId: string, patch: Partial<QuestionOption>) => {
+        const newSections = [...sections];
+        const sectionToUpdate = { ...newSections[sectionIndex] };
+        const questionsToUpdate = [...sectionToUpdate.questions];
+        const q = { ...questionsToUpdate[questionIndex] };
+        const optionDetails = (q.optionDetails || []).map((opt) => opt.id === optionId ? { ...opt, ...patch } : opt);
+        if (q.type === QuestionType.MSQ) {
+            q.correctAnswer = deriveCorrectAnswers(optionDetails);
+        }
+        q.optionDetails = optionDetails;
+        questionsToUpdate[questionIndex] = q;
+        sectionToUpdate.questions = questionsToUpdate;
+        newSections[sectionIndex] = sectionToUpdate;
+        setSections(newSections);
+    };
+
+    const addOption = (sectionIndex: number, questionIndex: number) => {
+        const newSections = [...sections];
+        const sectionToUpdate = { ...newSections[sectionIndex] };
+        const questionsToUpdate = [...sectionToUpdate.questions];
+        const q = { ...questionsToUpdate[questionIndex] };
+        const next: QuestionOption = {
+            id: `${q.id}-opt-${Date.now()}`,
+            type: 'text',
+            text: '',
+            isCorrect: false,
+        };
+        q.optionDetails = [...(q.optionDetails || []), next];
+        if (q.type === QuestionType.MSQ) {
+            q.correctAnswer = deriveCorrectAnswers(q.optionDetails);
+        } else if (q.type === QuestionType.MCQ) {
+            // if no correct selected, default to first
+            const correctIdx = q.optionDetails.findIndex(o => o.isCorrect);
+            const idxToUse = correctIdx >= 0 ? correctIdx : 0;
+            q.optionDetails = q.optionDetails.map((opt, idx) => ({ ...opt, isCorrect: idx === idxToUse }));
+            q.correctAnswer = String.fromCharCode(65 + idxToUse);
+        }
+        questionsToUpdate[questionIndex] = q;
+        sectionToUpdate.questions = questionsToUpdate;
+        newSections[sectionIndex] = sectionToUpdate;
+        setSections(newSections);
+    };
+
+    const deleteOption = (sectionIndex: number, questionIndex: number, optionId: string) => {
+        const newSections = [...sections];
+        const sectionToUpdate = { ...newSections[sectionIndex] };
+        const questionsToUpdate = [...sectionToUpdate.questions];
+        const q = { ...questionsToUpdate[questionIndex] };
+        q.optionDetails = (q.optionDetails || []).filter(opt => opt.id !== optionId);
+        if (q.type === QuestionType.MSQ) {
+            q.correctAnswer = deriveCorrectAnswers(q.optionDetails);
+        } else if (q.type === QuestionType.MCQ) {
+            const correctIdx = q.optionDetails.findIndex(o => o.isCorrect);
+            const idxToUse = correctIdx >= 0 ? correctIdx : (q.optionDetails.length ? 0 : -1);
+            q.optionDetails = q.optionDetails.map((opt, idx) => ({ ...opt, isCorrect: idx === idxToUse }));
+            q.correctAnswer = idxToUse >= 0 ? String.fromCharCode(65 + idxToUse) : '';
+        }
+        questionsToUpdate[questionIndex] = q;
+        sectionToUpdate.questions = questionsToUpdate;
+        newSections[sectionIndex] = sectionToUpdate;
+        setSections(newSections);
+    };
+
+    const duplicateOption = (sectionIndex: number, questionIndex: number, optionId: string) => {
+        const newSections = [...sections];
+        const sectionToUpdate = { ...newSections[sectionIndex] };
+        const questionsToUpdate = [...sectionToUpdate.questions];
+        const q = { ...questionsToUpdate[questionIndex] };
+        const option = (q.optionDetails || []).find(o => o.id === optionId);
+        if (!option) return;
+        const copy: QuestionOption = { ...option, id: `${option.id}-copy-${Date.now()}` };
+        q.optionDetails = [...(q.optionDetails || []), copy];
+        if (q.type === QuestionType.MSQ) {
+            q.correctAnswer = deriveCorrectAnswers(q.optionDetails);
+        }
+        questionsToUpdate[questionIndex] = q;
+        sectionToUpdate.questions = questionsToUpdate;
+        newSections[sectionIndex] = sectionToUpdate;
+        setSections(newSections);
+    };
+
+    const setMCQCorrect = (sectionIndex: number, questionIndex: number, optionId: string) => {
+        const newSections = [...sections];
+        const sectionToUpdate = { ...newSections[sectionIndex] };
+        const questionsToUpdate = [...sectionToUpdate.questions];
+        const q = { ...questionsToUpdate[questionIndex] };
+        q.optionDetails = (q.optionDetails || []).map((opt, idx) => {
+            const isCorrect = opt.id === optionId;
+            return { ...opt, isCorrect };
+        });
+        // correctAnswer as label A/B/C etc
+        const correctIdx = q.optionDetails.findIndex(o => o.id === optionId);
+        q.correctAnswer = correctIdx >= 0 ? String.fromCharCode(65 + correctIdx) : '';
+        questionsToUpdate[questionIndex] = q;
+        sectionToUpdate.questions = questionsToUpdate;
+        newSections[sectionIndex] = sectionToUpdate;
+        setSections(newSections);
+    };
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, sectionIndex: number, questionIndex: number) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -123,6 +301,16 @@ const AdminPanel: React.FC = () => {
       reader.readAsDataURL(file);
     }
   };
+
+    const handleOptionImageUpload = (e: React.ChangeEvent<HTMLInputElement>, sectionIndex: number, questionIndex: number, optionId: string) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            updateOptionField(sectionIndex, questionIndex, optionId, { imageData: reader.result as string });
+        };
+        reader.readAsDataURL(file);
+    };
 
   const handleSaveExam = async () => {
     if (!title || sections.length === 0) {
@@ -463,8 +651,8 @@ const AdminPanel: React.FC = () => {
                                                 <textarea 
                                                     value={q.text} 
                                                     onChange={(e) => updateQuestion(sIdx, qIdx, 'text', e.target.value)}
-                                                    className="w-full p-3 bg-white text-[#1F2937] border border-[#D1D5DB] rounded-lg h-32 focus:outline-none focus:border-[#1F2937] resize-none"
-                                                    placeholder="Enter question text here..."
+                                                    className="w-full p-3 bg-white text-[#1F2937] border border-[#D1D5DB] rounded-lg h-32 focus:outline-none focus:border-[#1F2937] resize-none whitespace-pre-wrap"
+                                                    placeholder="Enter question text here...\n(Line breaks will be preserved)"
                                                 />
                                             </div>
                                             <div className="md:col-span-4 space-y-4">
@@ -472,7 +660,7 @@ const AdminPanel: React.FC = () => {
                                                     <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Question Type</label>
                                                     <select 
                                                         value={q.type} 
-                                                        onChange={(e) => updateQuestion(sIdx, qIdx, 'type', e.target.value)}
+                                                        onChange={(e) => setQuestionType(sIdx, qIdx, e.target.value as QuestionType)}
                                                         className="w-full p-3 bg-white text-[#1F2937] border border-[#D1D5DB] rounded-lg focus:outline-none focus:border-[#1F2937]"
                                                     >
                                                         <option value={QuestionType.NAT}>NAT (Numerical)</option>
@@ -519,34 +707,262 @@ const AdminPanel: React.FC = () => {
                                                 <ImageIcon size={14} className="mr-2"/> Image Attachment
                                             </label>
                                             <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e, sIdx, qIdx)} className="text-sm text-[#6B7280] w-full"/>
-                                            {q.imageUrl && <img src={q.imageUrl} alt="Preview" className="mt-4 h-32 object-contain border p-1 bg-white rounded shadow-sm"/>}
+                                            {q.imageUrl && (
+                                                <div className="mt-4 space-y-2">
+                                                    <img src={q.imageUrl} alt="Preview" className="h-32 object-contain border p-1 bg-white rounded shadow-sm"/>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => updateQuestion(sIdx, qIdx, 'imageUrl', '')}
+                                                        className="text-sm text-red-600 border border-red-200 px-3 py-1.5 rounded hover:bg-red-50"
+                                                    >
+                                                        Delete Image
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
 
                                         {/* Options Logic */}
-                                        {(q.type === QuestionType.MCQ || q.type === QuestionType.MSQ) && (
-                                            <div className="mb-6">
-                                                <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Options (Comma separated)</label>
-                                                <input 
-                                                    type="text" 
-                                                    placeholder="A, B, C, D" 
-                                                    value={q.options?.join(', ')} 
-                                                    onChange={(e) => updateQuestion(sIdx, qIdx, 'options', e.target.value.split(',').map(s => s.trim()))}
-                                                    className="w-full p-3 bg-white text-[#1F2937] border border-[#D1D5DB] rounded-lg focus:outline-none focus:border-[#1F2937]"
-                                                />
+                                        {q.type === QuestionType.MSQ ? (
+                                            <div className="mb-6 space-y-4">
+                                                <div className="flex items-center justify-between">
+                                                    <label className="block text-xs font-bold text-[#6B7280] uppercase">Options (mark all correct)</label>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (!q.optionDetails || q.optionDetails.length === 0) {
+                                                                ensureOptionDetails(sIdx, qIdx);
+                                                            } else {
+                                                                addOption(sIdx, qIdx);
+                                                            }
+                                                        }}
+                                                        className="text-sm font-semibold text-[#1F2937] bg-white border border-[#E5E7EB] px-3 py-1.5 rounded hover:bg-[#F3F4F6]"
+                                                    >
+                                                        + Add Option
+                                                    </button>
+                                                </div>
+
+                                                {(q.optionDetails && q.optionDetails.length > 0) ? q.optionDetails.map((opt, oIdx) => (
+                                                    <div key={opt.id} className="border border-[#E5E7EB] rounded-lg bg-white p-4 space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="text-sm font-semibold text-[#1F2937]">Option {String.fromCharCode(65 + oIdx)}</div>
+                                                            <div className="flex items-center gap-3">
+                                                                <label className="flex items-center gap-2 text-sm text-[#1F2937]">
+                                                                    <span>Type</span>
+                                                                    <select
+                                                                        value={opt.type}
+                                                                        onChange={(e) => updateOptionField(sIdx, qIdx, opt.id, { type: e.target.value as QuestionOption['type'] })}
+                                                                        className="border border-[#D1D5DB] rounded px-2 py-1 text-sm"
+                                                                    >
+                                                                        <option value="text">Text</option>
+                                                                        <option value="image">Image</option>
+                                                                    </select>
+                                                                </label>
+                                                                <label className="flex items-center gap-2 text-sm text-[#1F2937]">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={opt.isCorrect}
+                                                                        onChange={(e) => updateOptionField(sIdx, qIdx, opt.id, { isCorrect: e.target.checked })}
+                                                                    />
+                                                                    <span>Is Correct</span>
+                                                                </label>
+                                                            </div>
+                                                        </div>
+
+                                                        {opt.type === 'text' ? (
+                                                            <input
+                                                                type="text"
+                                                                value={opt.text || ''}
+                                                                onChange={(e) => updateOptionField(sIdx, qIdx, opt.id, { text: e.target.value })}
+                                                                placeholder="Enter option text"
+                                                                className="w-full p-3 bg-white text-[#1F2937] border border-[#D1D5DB] rounded-lg focus:outline-none focus:border-[#1F2937]"
+                                                            />
+                                                        ) : (
+                                                            <div className="space-y-3">
+                                                                <input
+                                                                    type="file"
+                                                                    accept="image/*"
+                                                                    onChange={(e) => handleOptionImageUpload(e, sIdx, qIdx, opt.id)}
+                                                                    className="text-sm text-[#6B7280]"
+                                                                />
+                                                                {opt.imageData && (
+                                                                    <div className="flex items-start gap-3">
+                                                                        <img src={opt.imageData} alt={opt.altText || 'Option image'} className="h-28 w-auto object-contain border p-1 bg-white rounded" />
+                                                                        <div className="flex-1 space-y-2">
+                                                                            <input
+                                                                                type="text"
+                                                                                value={opt.altText || ''}
+                                                                                onChange={(e) => updateOptionField(sIdx, qIdx, opt.id, { altText: e.target.value })}
+                                                                                placeholder="Alt text for accessibility"
+                                                                                className="w-full p-2 text-sm border border-[#D1D5DB] rounded"
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        <div className="flex justify-end gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => duplicateOption(sIdx, qIdx, opt.id)}
+                                                                className="text-sm px-3 py-1.5 border border-[#D1D5DB] rounded hover:bg-[#F9FAFB]"
+                                                            >
+                                                                Duplicate
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => deleteOption(sIdx, qIdx, opt.id)}
+                                                                className="text-sm px-3 py-1.5 border border-red-200 text-red-600 rounded hover:bg-red-50"
+                                                            >
+                                                                Delete
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )) : (
+                                                    <div className="text-sm text-[#6B7280] border border-dashed border-[#D1D5DB] p-3 rounded bg-white">
+                                                        No options yet. Click "Add Option" to start.
+                                                    </div>
+                                                )}
+
+                                                {/* Marking preview */}
+                                                <div className="border border-[#E5E7EB] rounded-lg bg-white p-4">
+                                                    {(() => {
+                                                        const optionList = q.optionDetails || [];
+                                                        const preview = getMSQPreview(optionList, q.marks || 0);
+                                                        const totalCorrect = preview.totalCorrect;
+                                                        return (
+                                                            <div className="space-y-1 text-sm text-[#111827]">
+                                                                <div className="font-semibold">📊 Marking Breakdown (MSQ)</div>
+                                                                <div>Correct Answers: {totalCorrect} option(s) marked correct</div>
+                                                                <div>All correct selections: +{q.marks || 0}</div>
+                                                                {preview.breakdown.partial.map((p) => (
+                                                                    <div key={p.count}>Select {p.count}/{totalCorrect} correct: +{p.marks.toFixed(2)}</div>
+                                                                ))}
+                                                                <div>Any wrong selection: -1</div>
+                                                                <div>Unanswered: 0</div>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                </div>
                                             </div>
-                                        )}
+                                        ) : q.type === QuestionType.MCQ ? (
+                                            <div className="mb-6 space-y-4">
+                                                <div className="flex items-center justify-between">
+                                                    <label className="block text-xs font-bold text-[#6B7280] uppercase">Options (select one correct)</label>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (!q.optionDetails || q.optionDetails.length === 0) {
+                                                                ensureOptionDetails(sIdx, qIdx);
+                                                            } else {
+                                                                addOption(sIdx, qIdx);
+                                                            }
+                                                        }}
+                                                        className="text-sm font-semibold text-[#1F2937] bg-white border border-[#E5E7EB] px-3 py-1.5 rounded hover:bg-[#F3F4F6]"
+                                                    >
+                                                        + Add Option
+                                                    </button>
+                                                </div>
+
+                                                {(q.optionDetails && q.optionDetails.length > 0) ? q.optionDetails.map((opt, oIdx) => (
+                                                    <div key={opt.id} className="border border-[#E5E7EB] rounded-lg bg-white p-4 space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="text-sm font-semibold text-[#1F2937]">Option {String.fromCharCode(65 + oIdx)}</div>
+                                                            <div className="flex items-center gap-3">
+                                                                <label className="flex items-center gap-2 text-sm text-[#1F2937]">
+                                                                    <input
+                                                                        type="radio"
+                                                                        name={`mcq-correct-${q.id}`}
+                                                                        checked={opt.isCorrect}
+                                                                        onChange={() => setMCQCorrect(sIdx, qIdx, opt.id)}
+                                                                    />
+                                                                    <span>Correct</span>
+                                                                </label>
+                                                                <label className="flex items-center gap-2 text-sm text-[#1F2937]">
+                                                                    <span>Type</span>
+                                                                    <select
+                                                                        value={opt.type}
+                                                                        onChange={(e) => updateOptionField(sIdx, qIdx, opt.id, { type: e.target.value as QuestionOption['type'] })}
+                                                                        className="border border-[#D1D5DB] rounded px-2 py-1 text-sm"
+                                                                    >
+                                                                        <option value="text">Text</option>
+                                                                        <option value="image">Image</option>
+                                                                    </select>
+                                                                </label>
+                                                            </div>
+                                                        </div>
+
+                                                        {opt.type === 'text' ? (
+                                                            <input
+                                                                type="text"
+                                                                value={opt.text || ''}
+                                                                onChange={(e) => updateOptionField(sIdx, qIdx, opt.id, { text: e.target.value })}
+                                                                placeholder="Enter option text"
+                                                                className="w-full p-3 bg-white text-[#1F2937] border border-[#D1D5DB] rounded-lg focus:outline-none focus:border-[#1F2937]"
+                                                            />
+                                                        ) : (
+                                                            <div className="space-y-3">
+                                                                <input
+                                                                    type="file"
+                                                                    accept="image/*"
+                                                                    onChange={(e) => handleOptionImageUpload(e, sIdx, qIdx, opt.id)}
+                                                                    className="text-sm text-[#6B7280]"
+                                                                />
+                                                                {opt.imageData && (
+                                                                    <div className="flex items-start gap-3">
+                                                                        <img src={opt.imageData} alt={opt.altText || 'Option image'} className="h-28 w-auto object-contain border p-1 bg-white rounded" />
+                                                                        <div className="flex-1 space-y-2">
+                                                                            <input
+                                                                                type="text"
+                                                                                value={opt.altText || ''}
+                                                                                onChange={(e) => updateOptionField(sIdx, qIdx, opt.id, { altText: e.target.value })}
+                                                                                placeholder="Alt text for accessibility"
+                                                                                className="w-full p-2 text-sm border border-[#D1D5DB] rounded"
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        <div className="flex justify-end gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => duplicateOption(sIdx, qIdx, opt.id)}
+                                                                className="text-sm px-3 py-1.5 border border-[#D1D5DB] rounded hover:bg-[#F9FAFB]"
+                                                            >
+                                                                Duplicate
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => deleteOption(sIdx, qIdx, opt.id)}
+                                                                className="text-sm px-3 py-1.5 border border-red-200 text-red-600 rounded hover:bg-red-50"
+                                                            >
+                                                                Delete
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )) : (
+                                                    <div className="text-sm text-[#6B7280] border border-dashed border-[#D1D5DB] p-3 rounded bg-white">
+                                                        No options yet. Click "Add Option" to start.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : null}
 
                                         {/* Answer Logic */}
                                         <div>
                                             <label className="block text-xs font-bold text-[#6B7280] uppercase mb-2">Correct Answer</label>
                                             {q.type === QuestionType.MSQ ? (
-                                                <input 
-                                                    type="text" 
-                                                    placeholder="A, C (Comma separated)"
-                                                    value={Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : q.correctAnswer}
-                                                    onChange={(e) => updateQuestion(sIdx, qIdx, 'correctAnswer', e.target.value.split(',').map(s => s.trim()))}
-                                                    className="w-full p-3 bg-[#ECFDF5] text-[#111827] border border-[#10B981] rounded-lg font-bold focus:outline-none"
-                                                />
+                                                <div className="p-3 bg-[#ECFDF5] border border-[#10B981] rounded-lg text-sm text-[#064E3B]">
+                                                    <div className="font-semibold">Correct answers are set by the checkboxes above.</div>
+                                                    <div>
+                                                        Current: {(() => {
+                                                            const labels = (q.correctAnswer && Array.isArray(q.correctAnswer)) ? q.correctAnswer : [];
+                                                            return labels.length ? labels.join(', ') : 'None selected';
+                                                        })()}
+                                                    </div>
+                                                </div>
                                             ) : (
                                                 <input 
                                                     type="text" 

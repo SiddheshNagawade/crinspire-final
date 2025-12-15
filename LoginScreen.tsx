@@ -120,7 +120,6 @@ const LoginScreen: React.FC<Props> = ({ onInstructorLogin, onStudentLogin, onGue
               }
           });
 
-          console.log('signUp response', { data, signUpError });
 
           if (signUpError) {
               setError(signUpError.message);

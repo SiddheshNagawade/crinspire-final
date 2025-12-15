@@ -4,6 +4,7 @@ import { LogOut, LayoutDashboard, Crown } from 'lucide-react';
 import { ExamPaper, UserResponse, QuestionType } from './types';
 import CrinspireLogo from './components/CrinspireLogo';
 import { supabase } from './supabaseClient';
+import { updateUserStreak } from './utils/streak';
 import { checkCurrentUserAdminStatus } from './utils/adminAuth';
 import { loadRazorpayScript, initiatePayment, openRazorpayCheckout, verifyPayment } from './utils/paymentUtils';
 import { SUBSCRIPTION_PLANS } from './config/razorpay';
@@ -61,6 +62,7 @@ const App: React.FC = () => {
   const [isAuthenticatedInstructor, setIsAuthenticatedInstructor] = useState(false);
   const [isAuthenticatedStudent, setIsAuthenticatedStudent] = useState(false);
   const [sessionResponses, setSessionResponses] = useState<UserResponse>({});
+  const [lastSubmissionId, setLastSubmissionId] = useState<string | null>(null);
     const [toastVisible, setToastVisible] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('info');
@@ -77,6 +79,11 @@ const App: React.FC = () => {
   useEffect(() => {
       checkUserSession();
       fetchExams();
+  }, []);
+
+  useEffect(() => {
+      const stored = localStorage.getItem('last_submission_id');
+      if (stored) setLastSubmissionId(stored);
   }, []);
 
   const checkUserSession = async () => {
@@ -101,6 +108,29 @@ const App: React.FC = () => {
           const rawAge = profile?.age ?? session.user.user_metadata?.age;
           const normalizedAge = rawAge !== null && rawAge !== undefined && String(rawAge).trim() !== '' ? String(rawAge) : undefined;
 
+          // Check if subscription has expired
+          let isPremiumFlag = false;
+          if (profile?.is_premium) {
+              if (profile.subscription_expiry_date) {
+                  const expiryDate = new Date(profile.subscription_expiry_date);
+                  const now = new Date();
+                  if (expiryDate > now) {
+                      isPremiumFlag = true;
+                  } else {
+                      // Subscription expired - update profile to revoke premium
+                      isPremiumFlag = false;
+                      const { error: revokeError } = await supabase
+                          .from('profiles')
+                          .update({ is_premium: false })
+                          .eq('id', session.user.id);
+                      if (revokeError) console.error('Failed to revoke expired premium:', revokeError);
+                  }
+              } else {
+                  // Fallback: if is_premium is true but no expiry, keep it (grandfathered)
+                  isPremiumFlag = true;
+              }
+          }
+
           setStudentDetails({
               name: profile?.full_name || session.user.user_metadata?.full_name || 'Student',
               email: userEmail,
@@ -108,18 +138,6 @@ const App: React.FC = () => {
               subscriptionStart: profile?.subscription_start_date,
               subscriptionEnd: profile?.subscription_expiry_date
           });
-
-          // Robustly normalize is_premium (handles boolean, 't'/'f', 'true'/'false', '1'/'0', numeric)
-          const rawPremium = profile?.is_premium ?? session.user.user_metadata?.is_premium;
-          let isPremiumFlag = false;
-          if (typeof rawPremium === 'boolean') {
-              isPremiumFlag = rawPremium;
-          } else if (typeof rawPremium === 'number') {
-              isPremiumFlag = rawPremium === 1;
-          } else if (typeof rawPremium === 'string') {
-              const low = rawPremium.toLowerCase().trim();
-              isPremiumFlag = low === 't' || low === 'true' || low === '1';
-          }
 
           // Admins always get pro access; otherwise set based on premium flag
           if (isAdmin) {
@@ -169,6 +187,7 @@ const App: React.FC = () => {
                    imageUrl: q.image_url,
                    type: q.type,
                    options: q.options,
+                   optionDetails: q.option_details,
                    correctAnswer: q.correct_answer,
                    marks: q.marks,
                    negativeMarks: q.negative_marks,
@@ -249,12 +268,8 @@ const App: React.FC = () => {
 
   const handleAdminSave = async (savedExam: ExamPaper) => {
     try {
-        console.log("Saving exam...", savedExam);
-
         const { data: { session } } = await supabase.auth.getSession();
         const { data: userData } = await supabase.auth.getUser();
-        console.log('DEBUG: current session', session);
-        console.log('DEBUG: current user (getUser)', userData);
 
         if (!session) {
             throw new Error("You are not logged in. Please log in again.");
@@ -274,8 +289,6 @@ const App: React.FC = () => {
             paperPayload.id = savedExam.id;
         }
 
-        console.log("Upserting paper...", paperPayload);
-
         const { data: paperData, error: paperError } = await supabase
             .from('papers')
             .upsert(paperPayload)
@@ -283,16 +296,12 @@ const App: React.FC = () => {
             .single();
 
         if (paperError) {
-            console.error('Supabase paper upsert error object:', paperError);
-            // include session / user info in console for debugging RLS issues
-            console.error('Supabase session at error time:', session);
-            console.error('Supabase user at error time:', userData);
+            console.error('Failed to save exam:', paperError.message);
             throw paperError;
         }
         if (!paperData) throw new Error("No data returned from paper save");
         
         const paperId = paperData.id;
-        console.log("Paper saved with ID:", paperId);
 
         const { error: deleteError } = await supabase
             .from('questions')
@@ -326,6 +335,29 @@ const App: React.FC = () => {
                     }
                 }
 
+                // Process option images if present
+                let finalOptionDetails = q.optionDetails;
+                if (q.optionDetails && q.optionDetails.length > 0) {
+                    finalOptionDetails = await Promise.all(q.optionDetails.map(async (opt) => {
+                        if (opt.imageData && opt.imageData.startsWith('data:')) {
+                            try {
+                                const blob = await base64ToBlob(opt.imageData);
+                                const fileName = `${paperId}/options/${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+                                const { data: uploadData, error: uploadError } = await supabase.storage
+                                    .from('exam-images')
+                                    .upload(fileName, blob);
+                                if (!uploadError) {
+                                    const { data: { publicUrl } } = supabase.storage.from('exam-images').getPublicUrl(fileName);
+                                    return { ...opt, imageData: publicUrl };
+                                }
+                            } catch (imgErr) {
+                                console.error('Option image upload failed', imgErr);
+                            }
+                        }
+                        return opt;
+                    }));
+                }
+
                 questionsToInsert.push({
                     paper_id: paperId,
                     section_name: section.name,
@@ -335,6 +367,7 @@ const App: React.FC = () => {
                     marks: q.marks,
                     negative_marks: q.negativeMarks,
                     options: q.options || [], 
+                    option_details: finalOptionDetails || null,
                     correct_answer: q.correctAnswer, 
                     category: q.category
                 });
@@ -342,7 +375,6 @@ const App: React.FC = () => {
         }
         
         if (questionsToInsert.length > 0) {
-            console.log("Inserting questions...", questionsToInsert.length);
             const { error: insertError } = await supabase.from('questions').insert(questionsToInsert);
             if (insertError) throw insertError;
         }
@@ -442,49 +474,158 @@ const App: React.FC = () => {
     return { score, maxScore, accuracy };
   };
 
-  const handleExamSubmit = async (responses: UserResponse, timeSpent: number) => {
+  const handleExamSubmit = async (responses: UserResponse, timeSpent: number): Promise<string | null> => {
     setSessionResponses(responses);
-    
-    // Fallback: if selectedExamId is null, try to find it from exams? 
-    // Usually selectedExamId is set in startExamFlow. 
-    // If user refreshes, they lose state. In a real app we'd use localstorage or url param re-fetch.
+
     const selectedExam = exams.find(e => e.id === selectedExamId);
     if (!selectedExam) {
-        // If we can't find the exam (e.g. reload), we should probably redirect to dashboard 
-        // OR try to recover from URL if we were in the exam route. 
-        // But handleExamSubmit is called from the exam interface.
         console.error("No exam selected during submission");
         navigate('/dashboard');
-        return;
+        return null;
     }
 
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+        navigate('/login');
+        return null;
+    }
+
+    const safeTimeSpent = Math.max(0, Math.floor(timeSpent || 0));
+
+    // Build detailed per-question answers for review
+    const studentAnswers: any[] = [];
+    let totalMarks = 0;
+    let totalQuestions = 0;
+    let totalMaxMarks = 0;
+
+    selectedExam.sections.forEach(sec => {
+        sec.questions.forEach(q => {
+            totalQuestions += 1;
+            totalMaxMarks += q.marks;
+            const userAns = responses[q.id];
+            const isAttempted = userAns !== undefined && userAns !== '' && (Array.isArray(userAns) ? userAns.length > 0 : true);
+
+            // Derive correct option ids
+            let correctOptionIds: string[] = [];
+            if (q.optionDetails && q.optionDetails.length > 0) {
+                correctOptionIds = q.optionDetails
+                    .map((opt, idx) => ({ opt, label: String.fromCharCode(65 + idx) }))
+                    .filter(({ opt }) => opt.isCorrect)
+                    .map(({ opt, label }) => opt.id || label);
+            } else if (Array.isArray(q.correctAnswer)) {
+                correctOptionIds = [...q.correctAnswer];
+            } else if (typeof q.correctAnswer === 'string') {
+                correctOptionIds = [q.correctAnswer];
+            }
+
+            let selectedOptionIds: string[] | undefined;
+            let selectedValue: string | undefined;
+            let correctValue: string | undefined;
+            let isCorrect = false;
+
+            if (q.type === QuestionType.NAT) {
+                selectedValue = typeof userAns === 'string' ? userAns : undefined;
+                correctValue = typeof q.correctAnswer === 'string' ? q.correctAnswer : undefined;
+                isCorrect = isAttempted && selectedValue !== undefined && correctValue !== undefined && selectedValue.trim().toLowerCase() === correctValue.trim().toLowerCase();
+            } else if (q.type === QuestionType.MCQ) {
+                selectedOptionIds = userAns ? [String(userAns)] : [];
+                const correct = correctOptionIds[0];
+                isCorrect = isAttempted && selectedOptionIds.length === 1 && correctOptionIds.includes(selectedOptionIds[0]);
+                correctOptionIds = correct ? [correct] : correctOptionIds;
+            } else if (q.type === QuestionType.MSQ) {
+                selectedOptionIds = Array.isArray(userAns) ? [...userAns].sort() : [];
+                const expected = [...correctOptionIds].sort();
+                isCorrect = isAttempted && JSON.stringify(selectedOptionIds) === JSON.stringify(expected);
+            }
+
+            const marksEarned = !isAttempted
+                ? 0
+                : isCorrect
+                ? q.marks
+                : -q.negativeMarks;
+
+            totalMarks += marksEarned;
+
+            studentAnswers.push({
+                question_id: q.id,
+                selected_option_ids: selectedOptionIds,
+                selected_value: selectedValue,
+                correct_value: correctValue,
+                marks_earned: marksEarned,
+                is_correct: isCorrect,
+                correct_option_ids: correctOptionIds,
+                question_type: q.type,
+                attempted: isAttempted,
+                max_marks: q.marks,
+            });
+        });
+    });
+
+    const passed = totalMarks >= 0;
+
     try {
-        let scoreData = calculateScore(selectedExam, responses);
-        const safeTimeSpent = Math.max(0, Math.floor(timeSpent || 0));
+        // Keep legacy attempts table for analytics/streaks
+        const scoreData = calculateScore(selectedExam, responses);
+        const { error: insertError } = await supabase.from('user_attempts').insert([{
+            user_id: session.user.id,
+            paper_id: selectedExam.id,
+            responses: responses,
+            time_spent: safeTimeSpent,
+            score: scoreData.score,
+            max_score: scoreData.maxScore,
+            accuracy: scoreData.accuracy
+        }]);
 
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-            console.log("Saving attempt to Supabase...");
-            const { error: insertError } = await supabase.from('user_attempts').insert([{
-                user_id: session.user.id,
-                paper_id: selectedExam.id,
-                responses: responses,
-                time_spent: safeTimeSpent,
-                score: scoreData.score,
-                max_score: scoreData.maxScore,
-                accuracy: scoreData.accuracy
-            }]);
-
-            if (insertError) {
-                console.error("Supabase insert error:", insertError);
-            } else {
-                console.log("Attempt saved successfully.");
+        if (insertError) {
+            console.error("Supabase insert error:", insertError);
+        } else {
+            try {
+                await updateUserStreak(session.user.id);
+            } catch (e) {
+                console.error('Failed to update streak', e);
             }
         }
+
+        // Insert detailed submission for review
+        const { data: submissionRow, error: submissionError } = await supabase
+            .from('exam_submissions')
+            .insert([{
+                user_id: session.user.id,
+                exam_id: selectedExam.id,
+                student_answers: studentAnswers,
+                total_marks: totalMarks,
+                total_questions: totalQuestions,
+                passed,
+            }])
+            .select()
+            .single();
+
+        if (submissionError) {
+            console.error('Failed to save submission for review:', submissionError);
+            return null;
+        }
+
+        // Cache for session-bound review page and allow dashboard recall within 24h
+        sessionStorage.setItem(`exam_review_${submissionRow.id}`, JSON.stringify(submissionRow));
+        // Store result data for back navigation from ExamReview
+        sessionStorage.setItem('last_result_data', JSON.stringify({
+            examId: selectedExam.id,
+            responses: responses,
+            submissionId: submissionRow.id,
+            timestamp: Date.now()
+        }));
+        setLastSubmissionId(submissionRow.id);
+        localStorage.setItem('last_submission_id', submissionRow.id);
+        localStorage.setItem(`latest_submission_${selectedExam.id}`, JSON.stringify({
+            submissionId: submissionRow.id,
+            examId: selectedExam.id,
+            expiresAt: submissionRow.expires_at || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }));
+
+        return submissionRow.id as string;
     } catch (error) {
         console.error("Critical error during exam submission:", error);
-    } finally {
-        navigate('/result');
+        return null;
     }
   };
 
@@ -616,7 +757,8 @@ const App: React.FC = () => {
           handleAdminSave,
           handleExamSubmit,
           handleUpgrade,
-          calculateScore
+          calculateScore,
+          lastSubmissionId
         }} />
       </main>
         {/* Toast */}

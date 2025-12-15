@@ -8,9 +8,13 @@ import PricingPage from './components/PricingPage';
 import InstructionScreen from './components/InstructionScreen';
 import LoginScreen from './components/LoginScreen';
 import ResultScreen from './components/ResultScreen';
+import ExamResults from './components/ExamResults';
+import ExamReview from './components/ExamReview';
 import ProfileDashboard from './components/ProfileDashboard';
 import StudentExamInterface from './components/StudentExamInterface';
 import AdminPanel from './components/AdminPanel';
+import AuthRedirectHandler from './components/AuthRedirectHandler';
+import UpdatePassword from './components/UpdatePassword';
 
 const container = document.getElementById('root');
 if (!container) {
@@ -31,6 +35,10 @@ root.render(
           <Route path="/instructions/:examId" element={<InstructionScreen />} />
           <Route path="/exam/:examId" element={<StudentExamInterface />} />
           <Route path="/result" element={<ResultScreen />} />
+          <Route path="/exam-results/:submissionId" element={<ExamResults />} />
+          <Route path="/exam-review/:submissionId" element={<ExamReview />} />
+          <Route path="/auth/callback" element={<AuthRedirectHandler />} />
+          <Route path="/update-password" element={<UpdatePassword />} />
           <Route path="*" element={<h1>404 Not Found</h1>} />
         </Route>
       </Routes>

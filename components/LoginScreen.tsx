@@ -3,6 +3,7 @@ import { Lock, Mail, User, BookOpen, Calendar, ArrowRight, ArrowLeft } from 'luc
 import { supabase } from '../supabaseClient';
 import { authenticateInstructor } from '../utils/adminAuth';
 import { useNavigate, useOutletContext, useLocation } from 'react-router-dom';
+import { upsertProfileFromClient } from '../utils/profile';
 
 
 const LoginScreen: React.FC = () => {
@@ -16,6 +17,32 @@ const LoginScreen: React.FC = () => {
       const state = location.state as any;
       return state?.authMode === 'REGISTER' ? 'REGISTER' : 'LOGIN';
     });
+
+    // Recovery session fallback banner
+    const [recoveryActive, setRecoveryActive] = useState(false);
+
+    useEffect(() => {
+        // Detect recovery from query param
+        try {
+            const params = new URLSearchParams(location.search);
+            if (params.get('type') === 'recovery') {
+                setRecoveryActive(true);
+                return;
+            }
+        } catch {}
+
+        // Or detect if Supabase has a temporary session
+        (async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            // If we have a session but arrived via reset flow, advise update
+            if (session && session.user) {
+                // Supabase does not expose event here, so keep banner optional
+                // Show if recent URL contained recovery once (defensive):
+                const cameFromAuthCallback = document.referrer.includes('/auth/callback');
+                if (cameFromAuthCallback) setRecoveryActive(true);
+            }
+        })();
+    }, [location.search]);
 
     // Instructor State
     const [iEmail, setIEmail] = useState('');
@@ -79,8 +106,12 @@ const LoginScreen: React.FC = () => {
         }
 
         try {
+            const redirectTo = import.meta.env.DEV
+                ? 'http://localhost:3004/auth/callback'
+                : 'https://www.crinspire.com/auth/callback';
+
             const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: `${window.location.origin}/reset-password`
+                redirectTo
             });
 
             if (resetError) {
@@ -137,6 +168,8 @@ const LoginScreen: React.FC = () => {
                 setError(signUpError.message);
             } else {
                 if (data && data.user) {
+                    // Fill profile details (email, full_name, age)
+                    await upsertProfileFromClient(data.user);
                     setSuccessMsg("Registration successful! Please login.");
                     setAuthMode('LOGIN');
                     // Clear form
@@ -159,6 +192,8 @@ const LoginScreen: React.FC = () => {
             if (signInError) {
                 setError(signInError.message);
             } else if (data.user) {
+                // Update profile on successful login, too (email/full_name/age)
+                await upsertProfileFromClient(data.user);
                 const name = data.user.user_metadata.full_name || 'Student';
                 const age = data.user.user_metadata.age || '';
                 handleStudentLogin({ name, email: sEmail, age });
@@ -220,7 +255,17 @@ const LoginScreen: React.FC = () => {
                             {error}
                         </div>
                     )}
-          
+                    {recoveryActive && (
+                        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                            You have an active password recovery session.
+                            <button
+                                onClick={() => navigate('/update-password')}
+                                className="ml-2 inline-flex items-center rounded bg-black px-3 py-1 text-white"
+                            >
+                                Set new password
+                            </button>
+                        </div>
+                    )}
                     {successMsg && (
                         <div className="mb-6 p-3 bg-green-50 border border-green-100 rounded text-[#10B981] text-sm text-center font-medium">
                             {successMsg}

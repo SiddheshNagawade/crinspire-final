@@ -18,11 +18,21 @@ export interface Question {
   text: string;
   imageUrl?: string;
   type: QuestionType;
-  options?: string[]; // For MCQ and MSQ
+  options?: string[]; // For MCQ and MSQ (legacy plain text options)
+  optionDetails?: QuestionOption[]; // Enhanced options with text/image and correctness
   correctAnswer?: string | string[]; // Single string for NAT/MCQ, array for MSQ
   marks: number;
   negativeMarks: number;
   category?: string; // For analytics (e.g., "Arithmetic", "Visual Spatial")
+}
+
+export interface QuestionOption {
+  id: string;
+  type: 'text' | 'image';
+  text?: string;
+  imageData?: string; // base64/Data URL for quick preview/storage
+  altText?: string;
+  isCorrect: boolean;
 }
 
 export interface Section {

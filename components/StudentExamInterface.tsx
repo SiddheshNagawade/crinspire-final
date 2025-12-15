@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Info, ChevronLeft, ChevronRight, AlertTriangle, Lock, Loader2 } from 'lucide-react';
-import { useParams, useOutletContext } from 'react-router-dom';
+import { User, Info, ChevronLeft, ChevronRight, AlertTriangle, Lock, Loader2, X } from 'lucide-react';
+import { useParams, useOutletContext, useNavigate } from 'react-router-dom';
 import { ExamPaper, QuestionStatus, QuestionType, UserResponse, UserQuestionStatus } from '../types';
+import { useBlockNavigation } from '../utils/useBlockNavigation';
 
 const StudentExamInterface: React.FC = () => {
   const { examId } = useParams();
+  const navigate = useNavigate();
   const { exams, handleExamSubmit } = useOutletContext<any>();
   const exam = exams.find((e: ExamPaper) => e.id === examId);
 
@@ -16,10 +18,11 @@ const StudentExamInterface: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState(exam?.durationMinutes ? exam.durationMinutes * 60 : 7200);
   const [showPalette, setShowPalette] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-    const submittedRef = useRef(false);
+  const submittedRef = useRef(false);
   
-  // Modal State
+  // Modal States
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
+  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
 
   // Safety Checks
   const hasSections = exam?.sections && exam.sections.length > 0;
@@ -78,6 +81,54 @@ const StudentExamInterface: React.FC = () => {
         return () => clearInterval(timer);
     }, [hasQuestions]);
 
+  // --- Navigation Guards ---
+  
+  // Activate router-level navigation blocking during exam
+  useBlockNavigation(hasQuestions && !submittedRef.current);
+  
+  // Block browser back/refresh/close during test
+  useEffect(() => {
+    if (!hasQuestions || submittedRef.current) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasQuestions]);
+
+  // Disable common shortcuts during test (Ctrl+R, Ctrl+W, F5, Alt+Left)
+  useEffect(() => {
+    if (!hasQuestions || submittedRef.current) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+R or F5 (refresh)
+      if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
+        e.preventDefault();
+        alert('Refreshing during the test is not allowed. Please click Submit to finish.');
+        return;
+      }
+      // Ctrl+W (close tab) - can't fully prevent but warn
+      if (e.ctrlKey && e.key === 'w') {
+        e.preventDefault();
+        alert('Closing the test window is not allowed. Please click Submit to finish.');
+        return;
+      }
+      // Alt+Left (browser back)
+      if (e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        alert('Navigation is disabled during the test. Please click Submit to finish.');
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [hasQuestions]);
+
   // --- Handlers ---
 
   const performSubmit = async () => {
@@ -96,8 +147,9 @@ const StudentExamInterface: React.FC = () => {
         // optional: notify the user briefly that auto-submit is occurring
         try {
             await handleExamSubmit(responses, timeSpent);
+            navigate('/result');
         } finally {
-            // no-op: navigation happens inside handleExamSubmit
+            // navigation performed immediately after submission attempt
         }
   };
 
@@ -189,6 +241,8 @@ const StudentExamInterface: React.FC = () => {
   const renderQuestionInput = () => {
     if (!currentQuestion) return null;
     const val = responses[currentQuestion.id];
+        const richOptions = currentQuestion.optionDetails || [];
+        const hasRich = richOptions && richOptions.length > 0;
 
     if (currentQuestion.type === QuestionType.NAT) {
         const textVal = (val as string) || '';
@@ -235,18 +289,30 @@ const StudentExamInterface: React.FC = () => {
     if (currentQuestion.type === QuestionType.MCQ) {
         return (
             <div className="mt-8 space-y-4">
-                {currentQuestion.options?.map((opt) => (
-                    <label key={opt} className={`flex items-center p-3 rounded-lg border cursor-pointer transition-all ${val === opt ? 'border-[#3B82F6] bg-blue-50' : 'border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}>
+                {(hasRich ? richOptions.map((opt, idx) => ({ opt, label: String.fromCharCode(65 + idx) })) : (currentQuestion.options || []).map((text, idx) => ({ opt: { type: 'text', text }, label: String.fromCharCode(65 + idx) as string })) ).map(({ opt, label }) => (
+                    <label key={label} className={`flex items-center p-4 rounded-lg border cursor-pointer transition-all ${val === label ? 'border-[#3B82F6] bg-blue-50' : 'border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}>
                         <input 
                             type="radio" 
                             name={currentQuestion.id}
-                            checked={val === opt}
-                            onChange={() => handleResponseChange(opt)}
-                            className="w-5 h-5 cursor-pointer accent-[#1F2937]"
+                            checked={val === label}
+                            onChange={() => handleResponseChange(label)}
+                            className="w-5 h-5 cursor-pointer accent-[#1F2937] flex-shrink-0"
                         />
-                        <span className="ml-3 text-lg font-medium text-[#111827]">
-                            {opt}
-                        </span>
+                        <div className="ml-4 flex-1 space-y-2">
+                            {opt.type === 'image' && opt.imageData ? (
+                                <div className="space-y-2">
+                                    <img 
+                                        src={opt.imageData as string} 
+                                        alt={(opt as any).altText || `Option`} 
+                                        className="max-h-[151px] max-w-[188px] object-contain border rounded bg-white cursor-pointer hover:opacity-80 transition-opacity"
+                                        onClick={() => setFullscreenImage(opt.imageData as string)}
+                                    />
+                                    {opt.text && <span className="text-lg font-medium text-[#111827]">{opt.text}</span>}
+                                </div>
+                            ) : (
+                                <span className="text-lg font-medium text-[#111827]">{opt.text}</span>
+                            )}
+                        </div>
                     </label>
                 ))}
             </div>
@@ -257,23 +323,35 @@ const StudentExamInterface: React.FC = () => {
         const selected = (val as string[]) || [];
         return (
             <div className="mt-8 space-y-4">
-                {currentQuestion.options?.map((opt) => (
-                     <label key={opt} className={`flex items-center p-3 rounded-lg border cursor-pointer transition-all ${selected.includes(opt) ? 'border-[#3B82F6] bg-blue-50' : 'border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}>
+                {(hasRich ? richOptions.map((opt, idx) => ({ opt, label: String.fromCharCode(65 + idx) })) : (currentQuestion.options || []).map((text, idx) => ({ opt: { type: 'text', text }, label: String.fromCharCode(65 + idx) as string })) ).map(({ opt, label }) => (
+                    <label key={label} className={`flex items-center p-4 rounded-lg border cursor-pointer transition-all ${selected.includes(label) ? 'border-[#3B82F6] bg-blue-50' : 'border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}>
                         <input 
                             type="checkbox" 
-                            checked={selected.includes(opt)}
+                            checked={selected.includes(label)}
                             onChange={(e) => {
                                 if (e.target.checked) {
-                                    handleResponseChange([...selected, opt]);
+                                    handleResponseChange([...(selected || []), label]);
                                 } else {
-                                    handleResponseChange(selected.filter(s => s !== opt));
+                                    handleResponseChange((selected || []).filter(s => s !== label));
                                 }
                             }}
-                            className="w-5 h-5 cursor-pointer accent-[#1F2937]"
+                            className="w-5 h-5 cursor-pointer accent-[#1F2937] flex-shrink-0"
                         />
-                        <span className="ml-3 text-lg font-medium text-[#111827]">
-                            {opt}
-                        </span>
+                        <div className="ml-4 flex-1 space-y-2">
+                            {opt.type === 'image' && (opt as any).imageData ? (
+                                <div className="space-y-2">
+                                    <img 
+                                        src={(opt as any).imageData} 
+                                        alt={(opt as any).altText || `Option`} 
+                                        className="max-h-[151px] max-w-[188px] object-contain border rounded bg-white cursor-pointer hover:opacity-80 transition-opacity"
+                                        onClick={() => setFullscreenImage((opt as any).imageData)}
+                                    />
+                                    {(opt as any).text && <span className="text-lg font-medium text-[#111827]">{(opt as any).text}</span>}
+                                </div>
+                            ) : (
+                                <span className="text-lg font-medium text-[#111827]">{(opt as any).text}</span>
+                            )}
+                        </div>
                     </label>
                 ))}
             </div>
@@ -379,13 +457,18 @@ const StudentExamInterface: React.FC = () => {
            {/* Question Body - Scrollable */}
            <div className="flex-1 overflow-y-auto p-8 relative">
                 <div className="max-w-4xl mx-auto">
-                    <div className="text-lg leading-loose mb-8 text-[#111827] font-medium select-none">
+                    <div className="text-lg leading-loose mb-8 text-[#111827] font-medium select-none whitespace-pre-wrap break-words">
                         {currentQuestion.text}
                     </div>
 
                     {currentQuestion.imageUrl && (
-                        <div className="mb-8">
-                            <img src={currentQuestion.imageUrl} alt="Question" className="max-w-full h-auto border border-[#E5E7EB] rounded shadow-sm" />
+                        <div className="mb-8 flex justify-center">
+                            <img 
+                                src={currentQuestion.imageUrl} 
+                                alt="Question" 
+                                className="max-h-[302px] max-w-[680px] object-contain border border-[#E5E7EB] rounded shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
+                                onClick={() => setFullscreenImage(currentQuestion.imageUrl)}
+                            />
                         </div>
                     )}
 
@@ -498,6 +581,39 @@ const StudentExamInterface: React.FC = () => {
             </div>
         )}
       </div>
+      
+      {/* Fullscreen Image Modal */}
+      {fullscreenImage && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setFullscreenImage(null)}
+        >
+          <div className="relative max-w-5xl max-h-[90vh] flex items-center justify-center">
+            {fullscreenImage.toLowerCase().endsWith('.svg') ? (
+              <object 
+                data={fullscreenImage} 
+                type="image/svg+xml"
+                className="max-w-full max-h-[90vh]"
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <img 
+                src={fullscreenImage} 
+                alt="Fullscreen" 
+                className="max-w-full max-h-[90vh] object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
+            <button
+              onClick={() => setFullscreenImage(null)}
+              className="absolute top-4 right-4 bg-white hover:bg-gray-200 rounded-full p-2 text-gray-800 transition-colors shadow-lg"
+              title="Close (click anywhere)"
+            >
+              <X size={24} />
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Submit Confirmation Modal */}
       {isSubmitModalOpen && (

@@ -14,25 +14,75 @@ interface CategoryAnalysis {
 
 const ResultScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { sessionResponses, exams, selectedExamId } = useOutletContext<any>();
+  const { sessionResponses, exams, selectedExamId, lastSubmissionId } = useOutletContext<any>();
   
-  const exam = exams.find((e: any) => e.id === selectedExamId);
-  const responses = sessionResponses;
+  // Try to load from sessionStorage if sessionResponses is empty (e.g., navigating back from review or page reload)
+  let exam = exams.find((e: any) => e.id === selectedExamId);
+  let responses = sessionResponses;
+  let activeExamId = selectedExamId;
+  
+  // If no data in context, try sessionStorage
+  if (!exam || Object.keys(responses || {}).length === 0) {
+    const cached = sessionStorage.getItem('last_result_data');
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        activeExamId = parsed.examId;
+        exam = exams.find((e: any) => e.id === parsed.examId);
+        responses = parsed.responses;
+      } catch (e) {
+        console.warn('Failed to parse cached result data', e);
+      }
+    }
+  }
+
+  const storedLinkRaw = activeExamId ? localStorage.getItem(`latest_submission_${activeExamId}`) : null;
+  let reviewLink: { submissionId: string; expiresAt?: string } | null = null;
+  if (storedLinkRaw) {
+    try {
+      const parsed = JSON.parse(storedLinkRaw);
+      if (parsed?.submissionId && (!parsed.expiresAt || new Date(parsed.expiresAt) > new Date())) {
+        reviewLink = parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to parse stored submission link', e);
+    }
+  }
+  const submissionIdForReview = reviewLink?.submissionId || lastSubmissionId;
+  const reviewExpiresAt = reviewLink?.expiresAt;
 
   // Mark exam as completed when result screen is shown
   useEffect(() => {
-    if (selectedExamId) {
-      markExamAsCompleted(selectedExamId).catch(err => 
+    if (activeExamId) {
+      markExamAsCompleted(activeExamId).catch(err => 
         console.error('Failed to mark exam as completed:', err)
       );
     }
-  }, [selectedExamId]);
+  }, [activeExamId]);
+
+  // Show loading if exams are still being fetched and we have cached data
+  if (!exam && exams.length === 0) {
+    const cached = sessionStorage.getItem('last_result_data');
+    if (cached) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600 font-medium">Loading exam data...</p>
+          </div>
+        </div>
+      );
+    }
+  }
 
   if (!exam) {
       return (
-          <div className="min-h-screen flex items-center justify-center flex-col">
-              <p>No result data found.</p>
-              <button onClick={() => navigate('/dashboard')} className="mt-4 text-blue-600 underline">Return Dashboard</button>
+          <div className="min-h-screen flex items-center justify-center flex-col bg-gray-50">
+              <div className="bg-yellow-100 border border-yellow-400 text-yellow-800 px-6 py-4 rounded-lg max-w-md text-center">
+                <p className="font-semibold mb-2">No result data found</p>
+                <p className="text-sm mb-4">The results may have expired or the page was reloaded after too long.</p>
+                <button onClick={() => navigate('/dashboard')} className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 font-semibold">Return to Dashboard</button>
+              </div>
           </div>
       );
   }
@@ -138,12 +188,27 @@ const ResultScreen: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#F3F4F6] p-8 font-sans text-[#111827]">
        <div className="max-w-6xl mx-auto space-y-8">
+           {/* Note */}
+           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded-xl shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+             <div className="text-sm font-semibold">Note: Results and solutions are available for 24 hours. Review or save before they expire.</div>
+             {reviewExpiresAt && <div className="text-xs text-yellow-700 font-medium">Expires {new Date(reviewExpiresAt).toLocaleString()}</div>}
+           </div>
+
            {/* Header */}
-           <div className="flex items-center justify-between">
+           <div className="flex items-center justify-between gap-3 flex-wrap">
                <h1 className="text-3xl font-bold text-[#1F2937]">Performance Analysis</h1>
-               <button onClick={() => navigate('/dashboard')} className="bg-white border border-[#D1D5DB] px-6 py-2 rounded-lg text-[#1F2937] hover:bg-[#F9FAFB] flex items-center shadow-sm font-medium transition-colors">
-                   <ArrowLeft size={18} className="mr-2"/> Back to Home
-               </button>
+               <div className="flex gap-2 flex-wrap">
+                 <button
+                   onClick={() => submissionIdForReview && navigate(`/exam-review/${submissionIdForReview}`)}
+                   disabled={!submissionIdForReview}
+                   className={`px-4 py-2 rounded-lg font-semibold shadow-sm border ${submissionIdForReview ? 'bg-[#1F2937] text-white hover:bg-black border-[#1F2937]' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`}
+                 >
+                   View solutions (24h)
+                 </button>
+                 <button onClick={() => navigate('/dashboard')} className="bg-white border border-[#D1D5DB] px-6 py-2 rounded-lg text-[#1F2937] hover:bg-[#F9FAFB] flex items-center shadow-sm font-medium transition-colors">
+                     <ArrowLeft size={18} className="mr-2"/> Back to Home
+                 </button>
+               </div>
            </div>
 
            {/* Top Stats Cards */}

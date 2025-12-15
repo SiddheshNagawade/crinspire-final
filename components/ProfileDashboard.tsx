@@ -11,6 +11,7 @@ import {
 import { ExamPaper, UserAttempt } from '../types';
 import { supabase } from '../supabaseClient';
 import { fetchCompletedExams } from '../utils/examUtils';
+import { getUserStreak, formatStreakDisplay } from '../utils/streak';
 import SkeletonLoader from './SkeletonLoader';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 
@@ -31,9 +32,11 @@ const StatCard = ({ icon: Icon, label, value, sub, colorClass, bgClass }: any) =
 
 const ProfileDashboard: React.FC = () => {
   const { studentDetails, exams, subscription, startExamFlow, handleUpgrade, handleProfileUpdate } = useOutletContext<any>();
+  const navigate = useNavigate();
 
   const [attempts, setAttempts] = useState<UserAttempt[]>([]);
   const [loadingAttempts, setLoadingAttempts] = useState(true);
+  const [latestSubmissions, setLatestSubmissions] = useState<Record<string, { id: string; expiresAt?: string }>>({});
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<SettingsTab>('SETTINGS');
@@ -41,9 +44,51 @@ const ProfileDashboard: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [sortOrder, setSortOrder] = useState<'NEWEST' | 'OLDEST'>('NEWEST');
   const [completedExamIds, setCompletedExamIds] = useState<Set<string>>(new Set());
+    const [streak, setStreak] = useState<number>(0);
+    const [longestStreak, setLongestStreak] = useState<number>(0);
 
   const [editForm, setEditForm] = useState({ fullName: studentDetails.name, age: studentDetails.age || '' });
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Handler to load submission and navigate to result screen
+  const handleViewResult = async (submissionId: string, examId: string) => {
+    try {
+      // Load submission from DB
+      const { data: submission, error } = await supabase
+        .from('exam_submissions')
+        .select('*')
+        .eq('id', submissionId)
+        .single();
+      
+      if (error) throw error;
+      
+      // Reconstruct responses object from student_answers
+      const responses: Record<string, any> = {};
+      (submission.student_answers || []).forEach((ans: any) => {
+        if (ans.question_type === 'NAT') {
+          responses[ans.question_id] = ans.selected_value;
+        } else if (ans.question_type === 'MSQ') {
+          responses[ans.question_id] = ans.selected_option_ids || [];
+        } else if (ans.question_type === 'MCQ') {
+          responses[ans.question_id] = ans.selected_option_ids?.[0] || '';
+        }
+      });
+      
+      // Cache the data for result screen
+      sessionStorage.setItem('last_result_data', JSON.stringify({
+        examId: examId,
+        responses: responses,
+        submissionId: submissionId,
+        timestamp: Date.now()
+      }));
+      
+      // Navigate to result screen
+      navigate('/result');
+    } catch (error) {
+      console.error('Failed to load result:', error);
+      alert('Failed to load result. Please try again.');
+    }
+  };
 
   useEffect(() => {
     const loadCompletedExams = async () => {
@@ -51,6 +96,56 @@ const ProfileDashboard: React.FC = () => {
       setCompletedExamIds(completed);
     };
     loadCompletedExams();
+  }, []);
+
+    useEffect(() => {
+        const loadStreak = async () => {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) return;
+                const info = await getUserStreak(session.user.id);
+                if (info) {
+                    setStreak(info.currentStreak || 0);
+                    setLongestStreak(info.longestStreak || 0);
+                } else {
+                    const dates = Array.from(new Set(attempts.map(a => new Date(a.created_at).toDateString())));
+                    setStreak(dates.length);
+                }
+            } catch (e) {
+                console.error('Failed to fetch streak', e);
+                const dates = Array.from(new Set(attempts.map(a => new Date(a.created_at).toDateString())));
+                setStreak(dates.length);
+            }
+        };
+        loadStreak();
+    }, [attempts.length]);
+
+  useEffect(() => {
+    const fetchRecentSubmissions = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) return;
+        
+        const nowIso = new Date().toISOString();
+        const { data, error } = await supabase
+          .from('exam_submissions')
+          .select('id, exam_id, expires_at')
+          .eq('user_id', session.user.id)
+          .gt('expires_at', nowIso)
+          .order('submitted_at', { ascending: false });
+        if (error) throw error;
+        const map: Record<string, { id: string; expiresAt?: string }> = {};
+        (data || []).forEach((row: any) => {
+          if (!map[row.exam_id]) {
+            map[row.exam_id] = { id: row.id, expiresAt: row.expires_at };
+          }
+        });
+        setLatestSubmissions(map);
+      } catch (err) {
+        console.error('Failed to fetch recent submissions', err);
+      }
+    };
+    fetchRecentSubmissions();
   }, []);
 
   useEffect(() => {
@@ -87,12 +182,6 @@ const ProfileDashboard: React.FC = () => {
     const bestAccuracy = attempts.length > 0 
       ? Math.max(...attempts.map(a => a.accuracy || 0)) 
       : 0;
-
-    let streak = 0;
-    if (attempts.length > 0) {
-        const dates = Array.from(new Set(attempts.map(a => new Date(a.created_at).toDateString())));
-        streak = dates.length; 
-    }
 
     return { totalTests, bestAccuracy, streak };
   }, [attempts]);
@@ -171,8 +260,8 @@ const ProfileDashboard: React.FC = () => {
           <StatCard 
             icon={Flame} 
             label="Day Streak" 
-            value={stats.streak} 
-            sub="Keep it up!"
+                        value={formatStreakDisplay(streak)} 
+                        sub={longestStreak ? `Best: ${longestStreak} days` : 'Keep it up!'}
             bgClass="bg-orange-50" 
             colorClass="text-orange-500"
           />
@@ -308,6 +397,21 @@ const ProfileDashboard: React.FC = () => {
                                     Start <ChevronRight size={12} className="ml-1"/>
                                 </span>
                             </div>
+
+                            {latestSubmissions[exam.id] && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleViewResult(latestSubmissions[exam.id].id, exam.id);
+                                }}
+                                className="mt-3 text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100 rounded-lg px-3 py-2 w-full hover:bg-blue-100 transition-colors"
+                              >
+                                View result & solutions (24h)
+                                {latestSubmissions[exam.id].expiresAt && (
+                                  <span className="block text-[10px] font-medium text-blue-500 mt-1">Expires {new Date(latestSubmissions[exam.id].expiresAt as string).toLocaleString()}</span>
+                                )}
+                              </button>
+                            )}
                         </div>
                      );
                  })
@@ -442,7 +546,7 @@ const ProfileDashboard: React.FC = () => {
                              <div>Tests</div>
                          </div>
                          <div className="text-center px-4 border-r border-gray-200">
-                             <div className="font-bold text-gray-900">{stats.streak}</div>
+                             <div className="font-bold text-gray-900">{streak}</div>
                              <div>Streak</div>
                          </div>
                          <div className="text-center px-4">
