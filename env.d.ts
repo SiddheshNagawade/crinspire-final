@@ -8,3 +8,7 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// Allow Deno npm specifier for Razorpay in edge functions
+declare module "npm:razorpay@2.9.2";
+declare module "https://deno.land/std@0.168.0/http/server.ts";

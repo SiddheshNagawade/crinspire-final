@@ -1,5 +1,8 @@
+// @ts-ignore - Deno import, types resolved in edge runtime
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+// @ts-ignore - Deno import for Supabase client
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// @ts-ignore - Deno npm specifier for Razorpay
 import Razorpay from 'npm:razorpay@2.9.2'
 
 declare const Deno: any;

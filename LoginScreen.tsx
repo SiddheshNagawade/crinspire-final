@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Lock, Mail, User, BookOpen, Calendar, ArrowRight, ArrowLeft } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { authenticateInstructor } from './utils/adminAuth';
+import { upsertProfileFromClient } from './utils/profile';
 
 interface Props {
   onInstructorLogin: () => void;
@@ -124,9 +125,19 @@ const LoginScreen: React.FC<Props> = ({ onInstructorLogin, onStudentLogin, onGue
           if (signUpError) {
               setError(signUpError.message);
           } else {
-              // Registration creates the user in auth.users
-              // The handle_new_user trigger creates the profile with name and age
-              setSuccessMsg('✅ Registration successful! Check your email to verify your account, then you can login.');
+              // Registration creates the user; mirror details into profiles immediately
+              if (data?.user) {
+                  await upsertProfileFromClient({
+                      ...data.user,
+                      user_metadata: {
+                          ...(data.user.user_metadata || {}),
+                          full_name: sName,
+                          age: sAge,
+                      },
+                  });
+              }
+
+              setSuccessMsg('✅ Registration successful! Check your email, verify your account, then log in.');
               // Clear form
               setSName('');
               setSEmail('');
