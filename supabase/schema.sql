@@ -116,12 +116,13 @@ create index if not exists idx_user_attempts_created_at on public.user_attempts 
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer as $$
 begin
-  -- Insert basic profile if not exists
-  insert into public.profiles (id, email, full_name, created_at)
+  -- Insert profile with both full_name and age from user metadata
+  insert into public.profiles (id, email, full_name, age, created_at)
   values (
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data ->> 'full_name', new.user_metadata ->> 'full_name', ''),
+    coalesce((new.raw_user_meta_data ->> 'age')::integer, (new.user_metadata ->> 'age')::integer, null),
     now()
   ) on conflict (id) do nothing;
   return new;

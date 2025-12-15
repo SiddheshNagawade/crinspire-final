@@ -124,16 +124,16 @@ const LoginScreen: React.FC<Props> = ({ onInstructorLogin, onStudentLogin, onGue
           if (signUpError) {
               setError(signUpError.message);
           } else {
-              // If email confirmation is required, `data.user` may be null.
-              if (data && data.user) {
-                  // Rely on the DB trigger `handle_new_user` to create the profile.
-                  // Avoid touching `profiles` from the client to prevent races/accidental overwrites.
-                  setSuccessMsg("Registration successful! Please login.");
-                  setAuthMode('LOGIN');
-              } else {
-                  setSuccessMsg('Registration initiated. Please check your email to confirm your account.');
-                  setAuthMode('LOGIN');
-              }
+              // Registration creates the user in auth.users
+              // The handle_new_user trigger creates the profile with name and age
+              setSuccessMsg('✅ Registration successful! Check your email to verify your account, then you can login.');
+              // Clear form
+              setSName('');
+              setSEmail('');
+              setSAge('');
+              setSPassword('');
+              setSConfirmPass('');
+              setAuthMode('LOGIN');
           }
 
       } else {

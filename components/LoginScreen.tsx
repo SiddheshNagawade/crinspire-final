@@ -170,7 +170,7 @@ const LoginScreen: React.FC = () => {
                 if (data && data.user) {
                     // Fill profile details (email, full_name, age)
                     await upsertProfileFromClient(data.user);
-                    setSuccessMsg("Registration successful! Please login.");
+                    setSuccessMsg("✅ Registration successful! Check your email to verify your account, then you can login.");
                     setAuthMode('LOGIN');
                     // Clear form
                     setSName('');
@@ -179,7 +179,7 @@ const LoginScreen: React.FC = () => {
                     setSPassword('');
                     setSConfirmPass('');
                 } else {
-                    setSuccessMsg('Registration initiated. Please check your email to confirm your account.');
+                    setSuccessMsg('✅ Registration successful! Check your email to verify your account, then you can login.');
                     setAuthMode('LOGIN');
                 }
             }
