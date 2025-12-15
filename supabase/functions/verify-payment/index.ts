@@ -18,9 +18,12 @@ serve(async (req) => {
     const { paymentId, orderId, signature, userId } = await req.json()
     
     if (!paymentId || !orderId || !userId) {
-      return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Missing required fields: paymentId, orderId, userId' 
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400,
+        status: 200,
       })
     }
 
@@ -117,16 +120,22 @@ serve(async (req) => {
         status: 200,
       })
     } else {
-      return new Response(JSON.stringify({ error: 'Invalid signature' }), {
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Invalid signature' 
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400,
+        status: 200,
       })
     }
   } catch (error: any) {
     console.error('Payment verification error:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ 
+      success: false,
+      error: error.message || 'Payment verification failed' 
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
+      status: 200,
     })
   }
 })

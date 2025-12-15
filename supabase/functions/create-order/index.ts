@@ -17,15 +17,30 @@ serve(async (req) => {
     const { amount, currency, planId, userId, email, fullName, description } = await req.json()
     
     if (!amount || !currency || !planId || !userId) {
-      return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Missing required fields: amount, currency, planId, userId' 
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400,
+        status: 200,
+      })
+    }
+
+    const keyId = Deno.env.get('RAZORPAY_KEY_ID')
+    const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET')
+    if (!keyId || !keySecret) {
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Razorpay credentials not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to Supabase secrets.' 
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
       })
     }
 
     const razorpay = new Razorpay({
-      key_id: Deno.env.get('RAZORPAY_KEY_ID') ?? '',
-      key_secret: Deno.env.get('RAZORPAY_KEY_SECRET') ?? '',
+      key_id: keyId,
+      key_secret: keySecret,
     })
 
     // Normalize incoming planId into canonical keys used across the system
@@ -61,9 +76,12 @@ serve(async (req) => {
     })
   } catch (error: any) {
     console.error('Error creating order:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ 
+      success: false,
+      error: error.message || 'Failed to create order' 
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
+      status: 200,
     })
   }
 })
