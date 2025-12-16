@@ -1108,7 +1108,7 @@ const AdminPanel: React.FC = () => {
                     >
                         <Plus size={20} className="mr-2"/> Add New Section
                     </button>
-                    </div>
+                </div>
                 </div>
 
                 <div className="mt-8 flex justify-end sticky bottom-8">
