@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Question, QuestionOption, QuestionType, Section, ExamPaper } from '../types';
 import { getMSQPreview } from '../utils/msq';
 import LoadingScreen from './LoadingScreen';
@@ -13,6 +13,7 @@ const AdminPanel: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showNavPanel, setShowNavPanel] = useState(true);
   
   // Editor State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -63,6 +64,27 @@ const AdminPanel: React.FC = () => {
       if(!window.confirm("Delete this entire section?")) return;
       const newSections = sections.filter((_, i) => i !== index);
       setSections(newSections);
+  };
+
+  const moveSectionUp = (index: number) => {
+    if (index === 0) return;
+    const newSections = [...sections];
+    [newSections[index - 1], newSections[index]] = [newSections[index], newSections[index - 1]];
+    setSections(newSections);
+  };
+
+  const moveSectionDown = (index: number) => {
+    if (index >= sections.length - 1) return;
+    const newSections = [...sections];
+    [newSections[index], newSections[index + 1]] = [newSections[index + 1], newSections[index]];
+    setSections(newSections);
+  };
+
+  const scrollToSection = (index: number) => {
+    const element = document.getElementById(`section-${index}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const addQuestion = (sectionIndex: number) => {
@@ -627,23 +649,78 @@ const AdminPanel: React.FC = () => {
                 </div>
 
                 {/* Sections */}
-                <div className="space-y-8">
-                    {sections.map((section, sIdx) => (
-                        <div key={section.id} className="border border-[#E5E7EB] rounded-lg bg-white overflow-hidden shadow-sm">
-                            {/* Section Header */}
-                            <div className="p-4 bg-[#F8F9FA] border-b border-[#E5E7EB] flex justify-between items-center">
-                                <div className="flex-1 mr-4">
-                                    <input 
-                                        value={section.name} 
-                                        onChange={(e) => updateSectionName(sIdx, e.target.value)}
-                                        className="font-bold bg-[#F8F9FA] text-[#1F2937] border-b-2 border-transparent focus:border-[#1F2937] focus:outline-none text-lg w-full hover:border-[#D1D5DB] transition-colors px-2 py-1"
-                                        placeholder="Section Name"
-                                    />
+                <div className="flex gap-6 relative">
+                    {/* Toggle Button */}
+                    <button
+                        type="button"
+                        onClick={() => setShowNavPanel(!showNavPanel)}
+                        className="fixed left-4 top-32 z-40 p-2 bg-white border border-[#E5E7EB] rounded-lg shadow-md hover:bg-[#F3F4F6] transition-colors"
+                        title={showNavPanel ? "Hide Navigation" : "Show Navigation"}
+                    >
+                        {showNavPanel ? <ChevronLeft size={18}/> : <ChevronRight size={18}/>}
+                    </button>
+
+                    {/* Left Navigation Panel */}
+                    {showNavPanel && (
+                        <div className="w-64 flex-shrink-0 sticky top-24 self-start">
+                            <div className="bg-white border border-[#E5E7EB] rounded-lg p-4 shadow-sm">
+                                <h3 className="text-sm font-bold text-[#1F2937] mb-3 flex items-center">
+                                    <LayoutList size={16} className="mr-2"/>
+                                    Sections
+                                </h3>
+                                <div className="space-y-2">
+                                    {sections.map((section, sIdx) => (
+                                        <button
+                                            key={section.id}
+                                            type="button"
+                                            onClick={() => scrollToSection(sIdx)}
+                                            className="w-full text-left px-3 py-2 rounded text-sm bg-[#F8F9FA] hover:bg-[#E5E7EB] text-[#1F2937] transition-colors border border-transparent hover:border-[#D1D5DB] flex items-center justify-between group"
+                                        >
+                                            <span className="truncate flex-1">{section.name}</span>
+                                            <span className="text-xs text-[#9CA3AF] ml-2">({section.questions.length})</span>
+                                        </button>
+                                    ))}
                                 </div>
-                                <button type="button" onClick={() => deleteSection(sIdx)} className="text-[#EF4444] hover:bg-[#FEE2E2] p-2 rounded transition-colors" title="Delete Section">
-                                    <Trash2 size={18}/>
-                                </button>
                             </div>
+                        </div>
+                    )}
+
+                    {/* Main Sections Content */}
+                    <div className="flex-1 space-y-8">
+                        {sections.map((section, sIdx) => (
+                            <div key={section.id} id={`section-${sIdx}`} className="border border-[#E5E7EB] rounded-lg bg-white overflow-hidden shadow-sm scroll-mt-24">
+                                {/* Section Header */}
+                                <div className="p-4 bg-[#F8F9FA] border-b border-[#E5E7EB] flex justify-between items-center">
+                                    <div className="flex items-center gap-2 flex-1 mr-4">
+                                        <button 
+                                            type="button" 
+                                            onClick={() => moveSectionUp(sIdx)}
+                                            disabled={sIdx === 0}
+                                            className="p-1.5 bg-white border border-[#D1D5DB] text-[#6B7280] rounded hover:bg-[#F3F4F6] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                            title="Move Section Up"
+                                        >
+                                            <ArrowUp size={16}/>
+                                        </button>
+                                        <button 
+                                            type="button" 
+                                            onClick={() => moveSectionDown(sIdx)}
+                                            disabled={sIdx === sections.length - 1}
+                                            className="p-1.5 bg-white border border-[#D1D5DB] text-[#6B7280] rounded hover:bg-[#F3F4F6] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                            title="Move Section Down"
+                                        >
+                                            <ArrowDown size={16}/>
+                                        </button>
+                                        <input 
+                                            value={section.name} 
+                                            onChange={(e) => updateSectionName(sIdx, e.target.value)}
+                                            className="font-bold bg-[#F8F9FA] text-[#1F2937] border-b-2 border-transparent focus:border-[#1F2937] focus:outline-none text-lg w-full hover:border-[#D1D5DB] transition-colors px-2 py-1"
+                                            placeholder="Section Name"
+                                        />
+                                    </div>
+                                    <button type="button" onClick={() => deleteSection(sIdx)} className="text-[#EF4444] hover:bg-[#FEE2E2] p-2 rounded transition-colors" title="Delete Section">
+                                        <Trash2 size={18}/>
+                                    </button>
+                                </div>
 
                             <div className="p-6 bg-white space-y-6">
                                 {section.questions.map((q, qIdx) => (
@@ -1031,6 +1108,7 @@ const AdminPanel: React.FC = () => {
                     >
                         <Plus size={20} className="mr-2"/> Add New Section
                     </button>
+                    </div>
                 </div>
 
                 <div className="mt-8 flex justify-end sticky bottom-8">
