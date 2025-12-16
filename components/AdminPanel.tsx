@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
 import { Question, QuestionOption, QuestionType, Section, ExamPaper } from '../types';
 import { getMSQPreview } from '../utils/msq';
 import LoadingScreen from './LoadingScreen';
@@ -102,6 +102,23 @@ const AdminPanel: React.FC = () => {
     sectionToUpdate.questions = sectionToUpdate.questions.filter((_, i) => i !== questionIndex);
     
     newSections[sectionIndex] = sectionToUpdate;
+    setSections(newSections);
+  };
+
+  const moveQuestionUp = (sectionIndex: number, questionIndex: number) => {
+    if (questionIndex === 0) return;
+    const newSections = [...sections];
+    const questions = [...newSections[sectionIndex].questions];
+    [questions[questionIndex - 1], questions[questionIndex]] = [questions[questionIndex], questions[questionIndex - 1]];
+    newSections[sectionIndex].questions = questions;
+    setSections(newSections);
+  };
+
+  const moveQuestionDown = (sectionIndex: number, questionIndex: number) => {
+    const newSections = [...sections];
+    const questions = newSections[sectionIndex].questions;
+    if (questionIndex >= questions.length - 1) return;
+    [questions[questionIndex], questions[questionIndex + 1]] = [questions[questionIndex + 1], questions[questionIndex]];
     setSections(newSections);
   };
 
@@ -634,7 +651,27 @@ const AdminPanel: React.FC = () => {
                                         
                                         {/* Question Header & Delete Button */}
                                         <div className="flex justify-between items-center mb-4">
-                                            <div className="text-xs font-bold text-[#9CA3AF] bg-white px-2 py-1 rounded border border-[#E5E7EB]">Q{qIdx + 1}</div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="text-xs font-bold text-[#9CA3AF] bg-white px-2 py-1 rounded border border-[#E5E7EB]">Q{qIdx + 1}</div>
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => moveQuestionUp(sIdx, qIdx)}
+                                                    disabled={qIdx === 0}
+                                                    className="p-1.5 bg-white border border-[#D1D5DB] text-[#6B7280] rounded hover:bg-[#F3F4F6] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    title="Move Up"
+                                                >
+                                                    <ArrowUp size={14}/>
+                                                </button>
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => moveQuestionDown(sIdx, qIdx)}
+                                                    disabled={qIdx === section.questions.length - 1}
+                                                    className="p-1.5 bg-white border border-[#D1D5DB] text-[#6B7280] rounded hover:bg-[#F3F4F6] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    title="Move Down"
+                                                >
+                                                    <ArrowDown size={14}/>
+                                                </button>
+                                            </div>
                                             <button 
                                                 type="button" 
                                                 onClick={() => deleteQuestion(sIdx, qIdx)}

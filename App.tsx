@@ -169,7 +169,9 @@ const App: React.FC = () => {
 
         const { data: questions, error: questionsError } = await supabase
             .from('questions')
-            .select('*');
+            .select('*')
+            .order('position', { ascending: true })
+            .order('created_at', { ascending: true });
 
         if (questionsError) throw questionsError;
 
@@ -191,8 +193,14 @@ const App: React.FC = () => {
                    correctAnswer: q.correct_answer,
                    marks: q.marks,
                    negativeMarks: q.negative_marks,
-                   category: q.category
+                   category: q.category,
+                   position: q.position || 0
                 });
+            });
+
+            // Sort questions within each section by position
+            Object.keys(sectionsMap).forEach(secName => {
+                sectionsMap[secName].sort((a, b) => (a.position || 0) - (b.position || 0));
             });
 
             const sections: any[] = Object.keys(sectionsMap).map((secName, idx) => ({
@@ -375,7 +383,12 @@ const App: React.FC = () => {
         }
         
         if (questionsToInsert.length > 0) {
-            const { error: insertError } = await supabase.from('questions').insert(questionsToInsert);
+            // Add position index to preserve insertion order
+            const questionsWithPosition = questionsToInsert.map((q, index) => ({
+                ...q,
+                position: index + 1
+            }));
+            const { error: insertError } = await supabase.from('questions').insert(questionsWithPosition);
             if (insertError) throw insertError;
         }
 
