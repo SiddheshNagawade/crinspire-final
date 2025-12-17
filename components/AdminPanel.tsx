@@ -14,6 +14,10 @@ const AdminPanel: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showNavPanel, setShowNavPanel] = useState(true);
+    const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+    const [isAutoSaving, setIsAutoSaving] = useState(false);
+    const [lastAutoSaveAt, setLastAutoSaveAt] = useState<Date | null>(null);
+    const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>('');
   
   // Editor State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -369,6 +373,10 @@ const AdminPanel: React.FC = () => {
           sections
         };
         await onSave(newExam);
+                // Update autosave snapshot to reflect latest saved state
+                const snapshot = JSON.stringify({ title, year, examType, duration, isPremium, sections });
+                setLastSavedSnapshot(snapshot);
+                setLastAutoSaveAt(new Date());
         setViewMode('LIST');
     } catch (e) {
         console.error(e);
@@ -377,6 +385,44 @@ const AdminPanel: React.FC = () => {
         setIsSaving(false);
     }
   };
+
+    // Build current draft exam object
+    const buildDraftExam = (): ExamPaper => ({
+        id: editingId || Date.now().toString(),
+        year,
+        title,
+        examType,
+        durationMinutes: duration,
+        isPremium,
+        sections
+    });
+
+    // Silent auto-save when content changed
+    const handleAutoSave = async () => {
+        if (isAutoSaving) return;
+        const snapshot = JSON.stringify({ title, year, examType, duration, isPremium, sections });
+        if (snapshot === lastSavedSnapshot) return;
+        try {
+            setIsAutoSaving(true);
+            const draft = buildDraftExam();
+            await onSave(draft, { silent: true });
+            setLastSavedSnapshot(snapshot);
+            setLastAutoSaveAt(new Date());
+        } catch (e) {
+            console.error('Auto-save failed', e);
+        } finally {
+            setIsAutoSaving(false);
+        }
+    };
+
+    // Interval: auto-save every 60s when enabled and in editor view
+    useEffect(() => {
+        if (!autoSaveEnabled || viewMode !== 'EDITOR') return;
+        const interval = setInterval(() => {
+            handleAutoSave();
+        }, 60000);
+        return () => clearInterval(interval);
+    }, [autoSaveEnabled, viewMode, title, year, examType, duration, isPremium, sections]);
 
   const handleBulkImport = () => {
       const input = prompt("Paste your Exam JSON structure (sections array or full exam object):");
@@ -664,6 +710,28 @@ const AdminPanel: React.FC = () => {
                     {showNavPanel && (
                         <div className="w-64 flex-shrink-0 sticky top-24 self-start">
                             <div className="bg-white border border-[#E5E7EB] rounded-lg p-4 shadow-sm">
+                                {/* Auto-save Toggle */}
+                                <div className="mb-4">
+                                    <label className="flex items-center cursor-pointer group">
+                                        <div className="relative">
+                                            <input
+                                                type="checkbox"
+                                                checked={autoSaveEnabled}
+                                                onChange={(e) => setAutoSaveEnabled(e.target.checked)}
+                                                className="sr-only"
+                                            />
+                                            <div className={`block w-12 h-7 rounded-full transition-colors ${autoSaveEnabled ? 'bg-[#1F2937]' : 'bg-gray-200'}`}></div>
+                                            <div className={`absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform transform ${autoSaveEnabled ? 'translate-x-5' : ''}`}></div>
+                                        </div>
+                                        <div className="ml-3">
+                                            <div className="text-xs font-bold text-[#1F2937]">Auto-save {autoSaveEnabled ? 'ON' : 'OFF'}</div>
+                                            <div className="text-[11px] text-[#6B7280]">
+                                                {isAutoSaving ? 'Saving…' : (lastAutoSaveAt ? `Last: ${lastAutoSaveAt.toLocaleTimeString()}` : 'Not saved yet')}
+                                            </div>
+                                        </div>
+                                    </label>
+                                </div>
+
                                 <h3 className="text-sm font-bold text-[#1F2937] mb-3 flex items-center">
                                     <LayoutList size={16} className="mr-2"/>
                                     Sections

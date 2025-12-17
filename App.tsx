@@ -274,7 +274,7 @@ const App: React.FC = () => {
     }
   }
 
-  const handleAdminSave = async (savedExam: ExamPaper) => {
+    const handleAdminSave = async (savedExam: ExamPaper, options?: { silent?: boolean }) => {
     try {
         const { data: { session } } = await supabase.auth.getSession();
         const { data: userData } = await supabase.auth.getUser();
@@ -392,8 +392,10 @@ const App: React.FC = () => {
             if (insertError) throw insertError;
         }
 
-        await fetchExams();
-        alert('✅ Exam saved successfully!');
+                await fetchExams();
+                if (!options?.silent) {
+                    alert('✅ Exam saved successfully!');
+                }
     } catch (error: any) {
         console.error('Save error details:', error);
         
