@@ -1,0 +1,28 @@
+# Crinspire Exam Simulator - Robots.txt
+# Allow search engines to crawl public content
+
+User-agent: *
+Allow: /
+Allow: /exams
+Allow: /pricing
+Allow: /login
+
+# Block sensitive pages from search results
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /private
+Disallow: /profile
+Disallow: /result
+Disallow: /exam-review
+Disallow: /exam-results
+Disallow: /exam/
+
+# Block API endpoints
+Disallow: /api/
+Disallow: /functions/
+
+# Crawl delay for bots (optional, in seconds)
+Crawl-delay: 1
+
+# Sitemap location for search engines
+Sitemap: https://crinspire.com/sitemap.xml
