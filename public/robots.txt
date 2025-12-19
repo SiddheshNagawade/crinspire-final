@@ -13,4 +13,4 @@ Disallow: /api/
 Disallow: /functions/
 Crawl-delay: 1
 
-Sitemap: https://crinspire.com/sitemap.xml
+Sitemap: https://www.crinspire.com/sitemap.xml
