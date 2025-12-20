@@ -623,12 +623,12 @@ const AdminPanel: React.FC = () => {
         };
 
         const normalizedSections: Section[] = asExamObject.sections.map((sec: any, secIdx: number) => {
-            const secId = typeof sec?.id === 'string' ? sec.id : `imp-sec-${now}-${secIdx}`;
+            const secId = typeof sec?.id === 'string' ? sec.id : crypto.randomUUID();
             const secName = typeof sec?.name === 'string' ? sec.name : (typeof sec?.section_name === 'string' ? sec.section_name : `Section ${secIdx + 1}`);
             const rawQuestions = Array.isArray(sec?.questions) ? sec.questions : [];
 
             const questions: Question[] = rawQuestions.map((rq: any, qIdx: number) => {
-                const qId = typeof rq?.id === 'string' ? rq.id : `imp-q-${now}-${secIdx}-${qIdx}`;
+                const qId = typeof rq?.id === 'string' ? rq.id : crypto.randomUUID();
                 const qType = normalizeType(rq?.type);
                 const optionDetails = normalizeOptionDetails(qId, rq, qType);
                 const correctAnswer = deriveCorrectAnswer(qType, optionDetails, rq?.correctAnswer ?? rq?.correct_answer);

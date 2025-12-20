@@ -167,14 +167,29 @@ const App: React.FC = () => {
              return;
         }
 
-        // Questions: prefer deterministic DB ordering via `position`.
-        // IMPORTANT: Order by paper_id (to group by exam), then by section (grouping within exam),
-        // then by position (per-section order), then created_at (as fallback).
-        // If the column doesn't exist (e.g. migration not applied / undone), fall back to created_at.
+        // Fetch sections with deterministic ordering from the sections table
+        const { data: sectionsData, error: sectionsError } = await supabase
+            .from('sections')
+            .select('*')
+            .in('paper_id', paperList.map(p => p.id))
+            .order('paper_id', { ascending: true })
+            .order('position', { ascending: true });
+
+        let sections: any[] = [];
+        if (sectionsError) {
+            // Sections table doesn't exist yet (migration not applied)
+            // Gracefully degrade: use questions to infer sections (order by name for consistency)
+            console.warn('Sections table not found; deriving from questions. Apply migration 11_add_sections_table.sql', sectionsError);
+        } else {
+            sections = sectionsData || [];
+        }
+
+        // Fetch questions with deterministic ordering via position
         let questions: any[] | null = null;
         const { data: questionsByPosition, error: questionsByPositionError } = await supabase
             .from('questions')
             .select('*')
+            .in('paper_id', paperList.map(p => p.id))
             .order('paper_id', { ascending: true })
             .order('section_name', { ascending: true })
             .order('position', { ascending: true })
@@ -186,6 +201,7 @@ const App: React.FC = () => {
                 const { data: questionsByCreatedAt, error: questionsByCreatedAtError } = await supabase
                     .from('questions')
                     .select('*')
+                    .in('paper_id', paperList.map(p => p.id))
                     .order('paper_id', { ascending: true })
                     .order('section_name', { ascending: true })
                     .order('created_at', { ascending: true });
@@ -201,13 +217,14 @@ const App: React.FC = () => {
 
         const reconstructedExams: ExamPaper[] = paperList.map((p: any) => {
             const paperQuestions = questions?.filter((q: any) => q.paper_id === p.id) || [];
+            const paperSections = sections.filter(s => s.paper_id === p.id);
             
-            const sectionsMap: {[key: string]: any[]} = {};
-            
+            // Build a map of questions by section name
+            const questionsBySection: {[sectionName: string]: any[]} = {};
             paperQuestions.forEach((q: any) => {
                 const secName = q.section_name || 'General';
-                if (!sectionsMap[secName]) sectionsMap[secName] = [];
-                sectionsMap[secName].push({
+                if (!questionsBySection[secName]) questionsBySection[secName] = [];
+                questionsBySection[secName].push({
                    id: q.id,
                    text: q.text,
                    imageUrl: q.image_url,
@@ -223,15 +240,28 @@ const App: React.FC = () => {
             });
 
             // Sort questions within each section by position
-            Object.keys(sectionsMap).forEach(secName => {
-                sectionsMap[secName].sort((a, b) => (a.position || 0) - (b.position || 0));
+            Object.keys(questionsBySection).forEach(secName => {
+                questionsBySection[secName].sort((a, b) => (a.position || 0) - (b.position || 0));
             });
 
-            const sections: any[] = Object.keys(sectionsMap).map((secName, idx) => ({
-                id: `sec-${p.id}-${idx}`,
-                name: secName,
-                questions: sectionsMap[secName]
-            }));
+            // Build sections array: prioritize sections table if available, fallback to derived order
+            let sectionsArray: any[] = [];
+            if (paperSections.length > 0) {
+                // Use explicit section ordering from sections table
+                sectionsArray = paperSections.map((sec: any, idx: number) => ({
+                    id: sec.id,
+                    name: sec.name,
+                    questions: questionsBySection[sec.name] || []
+                }));
+            } else {
+                // Fallback: derive sections from questions, ordered alphabetically by name for consistency
+                const sectionNames = Object.keys(questionsBySection).sort();
+                sectionsArray = sectionNames.map((secName, idx) => ({
+                    id: `sec-${p.id}-${idx}`,
+                    name: secName,
+                    questions: questionsBySection[secName]
+                }));
+            }
 
             return {
                 id: p.id,
@@ -240,7 +270,7 @@ const App: React.FC = () => {
                 examType: p.exam_type,
                 durationMinutes: p.duration_minutes || 120,
                 isPremium: !!p.is_premium,
-                sections: sections
+                sections: sectionsArray
             };
         });
 
@@ -308,6 +338,7 @@ const App: React.FC = () => {
       q1.image_url === q2.image_url &&
       q1.category === q2.category &&
       q1.section_name === q2.section_name &&
+      q1.position === q2.position &&
       JSON.stringify(q1.options) === JSON.stringify(q2.options) &&
       JSON.stringify(q1.option_details) === JSON.stringify(q2.option_details) &&
       JSON.stringify(q1.correct_answer) === JSON.stringify(q2.correct_answer)
@@ -384,6 +415,44 @@ const App: React.FC = () => {
         if (!paperData) throw new Error("No data returned from paper save");
         
         const paperId = paperData.id;
+        
+        if (!paperId) {
+            console.error('❌ Critical: paperId is null after paper save!', paperData);
+            throw new Error("Paper ID is null - cannot proceed with save");
+        }
+
+        // PERSIST SECTION ORDER: Save sections to the sections table with explicit positions
+        // Note: We upsert by (paper_id, name) constraint, so we don't include section.id
+        // This allows Supabase to either insert new or update existing sections
+        const sectionsToUpsert = savedExam.sections.map((section, idx) => ({
+            paper_id: paperId,
+            name: section.name,
+            position: idx
+        }));
+
+        console.log('💾 Saving sections:', sectionsToUpsert);
+
+        const { error: sectionError, data: sectionData } = await supabase
+            .from('sections')
+            .upsert(sectionsToUpsert, { onConflict: 'paper_id,name' })
+            .select();
+
+        if (sectionError) {
+            const msg = (sectionError as any)?.message?.toLowerCase?.() || '';
+            console.error('⚠️ Section save error details:', {
+                error: sectionError,
+                message: msg,
+                sectionsAttempted: sectionsToUpsert
+            });
+            
+            // Only throw if it's NOT a "table doesn't exist" error (migration not applied)
+            if (!msg.includes('does not exist') && !msg.includes('relation') && !msg.includes('table')) {
+                // Log but don't throw - allow question save to proceed
+                console.warn('⚠️ Could not save section order. Questions will still be saved.');
+            }
+        } else {
+            console.log('✅ Sections saved successfully:', sectionData);
+        }
 
         // SELECTIVE UPSERT: Only update questions that changed
         // Fetch existing questions with all fields to compare
@@ -397,7 +466,8 @@ const App: React.FC = () => {
         const existingQuestions = existingQuestionsData || [];
         const questionsToInsert = [];
 
-        for (const section of savedExam.sections) {
+        for (let sIdx = 0; sIdx < savedExam.sections.length; sIdx++) {
+            const section = savedExam.sections[sIdx];
             for (let qIdx = 0; qIdx < section.questions.length; qIdx++) {
                 const q = section.questions[qIdx];
                 let finalImageUrl = q.imageUrl;
@@ -444,10 +514,16 @@ const App: React.FC = () => {
                     }));
                 }
 
+                // Ensure ID is a valid UUID; regenerate if temp string
+                const qId = (q.id && typeof q.id === 'string' && q.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i))
+                    ? q.id
+                    : crypto.randomUUID();
+
                 questionsToInsert.push({
-                    id: q.id, // IMPORTANT: preserve existing IDs for updates
+                    id: qId,
                     paper_id: paperId,
                     section_name: section.name,
+                    section_index: sIdx,
                     text: q.text,
                     image_url: finalImageUrl,
                     type: q.type,
@@ -457,7 +533,7 @@ const App: React.FC = () => {
                     option_details: finalOptionDetails || null,
                     correct_answer: q.correctAnswer, 
                     category: q.category,
-                    position: qIdx + 1  // Position is 1-indexed within section
+                    position: qIdx + 1
                 });
             }
         }
