@@ -131,7 +131,7 @@ const ResultScreen: React.FC = () => {
         secScore += q.marks;
         secCorrect++;
       } else {
-        secScore -= q.negativeMarks; 
+        secScore -= Math.abs(q.negativeMarks);
         secWrong++;
       }
     });
@@ -174,12 +174,12 @@ const ResultScreen: React.FC = () => {
                if (JSON.stringify(userArr) === JSON.stringify(correctArr)) isCorrect = true;
            }
 
-           if (isCorrect) {
+             if (isCorrect) {
                data.correct++;
                data.scoredMarks += q.marks;
-           } else if (userAns) {
-               data.scoredMarks -= q.negativeMarks;
-           }
+             } else if (userAns) {
+               data.scoredMarks -= Math.abs(q.negativeMarks);
+             }
       });
   });
 

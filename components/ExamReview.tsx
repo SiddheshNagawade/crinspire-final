@@ -247,7 +247,7 @@ const ExamReview: React.FC = () => {
             {currentQuestion.text}
           </h2>
           {currentQuestion.image_url && (
-            <img src={currentQuestion.image_url} alt="Question" className="max-w-full max-h-[320px] object-contain mb-4" />
+            <img src={currentQuestion.image_url} alt="Question" loading="lazy" className="max-w-full max-h-[320px] object-contain mb-4" />
           )}
 
           {isNat ? (
@@ -278,7 +278,7 @@ const ExamReview: React.FC = () => {
                       <div className="flex-1 space-y-2">
                         {opt.text && <p className="font-semibold text-gray-900 pr-24">{opt.text}</p>}
                         {opt.image && (
-                          <img src={opt.image} alt={opt.alt} className="max-h-[151px] max-w-[188px] object-contain rounded bg-white border border-gray-200" />
+                          <img src={opt.image} alt={opt.alt} loading="lazy" className="max-h-[151px] max-w-[188px] object-contain rounded bg-white border border-gray-200" />
                         )}
                       </div>
                       <span className="text-3xl whitespace-nowrap flex items-center gap-1 ml-2">

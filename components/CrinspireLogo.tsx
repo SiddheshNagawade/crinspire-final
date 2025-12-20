@@ -7,7 +7,7 @@ interface Props {
 
 const CrinspireLogo: React.FC<Props> = ({ className, style }) => {
   return (
-    <img src="/logo.svg" alt="Crinspire" className={className} style={style} />
+    <img src="/logo.svg" alt="Crinspire" loading="lazy" className={className} style={style} />
   );
 };
 

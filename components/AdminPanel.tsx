@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Question, QuestionOption, QuestionType, Section, ExamPaper } from '../types';
 import { getMSQPreview } from '../utils/msq';
@@ -18,6 +18,10 @@ const AdminPanel: React.FC = () => {
     const [isAutoSaving, setIsAutoSaving] = useState(false);
     const [lastAutoSaveAt, setLastAutoSaveAt] = useState<Date | null>(null);
     const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>('');
+        const [showAiJsonFormat, setShowAiJsonFormat] = useState(false);
+
+        const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
+        const backGuardArmedRef = useRef(false);
   
   // Editor State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -27,6 +31,21 @@ const AdminPanel: React.FC = () => {
   const [duration, setDuration] = useState(120);
   const [isPremium, setIsPremium] = useState(false);
   const [sections, setSections] = useState<Section[]>([]);
+
+    const buildSnapshot = () => JSON.stringify({ title, year, examType, duration, isPremium, sections });
+
+    const isDirty = useMemo(() => {
+        if (viewMode !== 'EDITOR') return false;
+        const snapshot = buildSnapshot();
+        // If we don't have a baseline yet, don't block navigation.
+        if (!lastSavedSnapshot) return false;
+        return snapshot !== lastSavedSnapshot;
+    }, [viewMode, title, year, examType, duration, isPremium, sections, lastSavedSnapshot]);
+
+    const confirmDiscardIfDirty = () => {
+        if (!isDirty) return true;
+        return window.confirm('You have unsaved changes. Leave without saving?');
+    };
   
   const handleEditExam = (exam: ExamPaper) => {
       setEditingId(exam.id);
@@ -36,7 +55,20 @@ const AdminPanel: React.FC = () => {
       setDuration(exam.durationMinutes);
       setIsPremium(!!exam.isPremium);
       // Deep copy sections to avoid mutating props directly
-      setSections(JSON.parse(JSON.stringify(exam.sections)));
+      const copiedSections = JSON.parse(JSON.stringify(exam.sections));
+      setSections(copiedSections);
+
+      // Establish dirty-check baseline for back warning + autosave
+      setLastSavedSnapshot(JSON.stringify({
+          title: exam.title,
+          year: exam.year,
+          examType: exam.examType,
+          duration: exam.durationMinutes,
+          isPremium: !!exam.isPremium,
+          sections: copiedSections
+      }));
+      setLastAutoSaveAt(null);
+
       setViewMode('EDITOR');
   };
 
@@ -47,14 +79,78 @@ const AdminPanel: React.FC = () => {
       setExamType('UCEED');
       setDuration(120);
       setIsPremium(false);
-      setSections([{ id: Date.now().toString(), name: 'New Section', questions: [] }]);
+      const initialSections = [{ id: crypto.randomUUID(), name: 'New Section', questions: [] }];
+      setSections(initialSections);
+
+      // Establish baseline (so warning only appears after edits)
+      setLastSavedSnapshot(JSON.stringify({
+          title: '',
+          year: new Date().getFullYear(),
+          examType: 'UCEED',
+          duration: 120,
+          isPremium: false,
+          sections: initialSections
+      }));
+      setLastAutoSaveAt(null);
+
       setViewMode('EDITOR');
   };
+
+    // Browser back button warning (Admin editor only). This does NOT block tab close/refresh.
+    // We add a same-URL history guard entry so back doesn't unmount the editor state.
+    useEffect(() => {
+        if (viewMode !== 'EDITOR') return;
+
+        if (!backGuardArmedRef.current) {
+            window.history.pushState({ __adminEditorGuard: true }, '', window.location.href);
+            backGuardArmedRef.current = true;
+        }
+
+        const onPopState = () => {
+            // Back pressed: we landed on the previous history entry (same URL).
+            // If user confirms, go back once more to actually leave.
+            if (!confirmDiscardIfDirty()) {
+                window.history.pushState({ __adminEditorGuard: true }, '', window.location.href);
+                backGuardArmedRef.current = true;
+                return;
+            }
+
+            // Allow leaving without re-prompting
+            window.removeEventListener('popstate', onPopState);
+            backGuardArmedRef.current = false;
+            window.history.back();
+        };
+
+        window.addEventListener('popstate', onPopState);
+        return () => window.removeEventListener('popstate', onPopState);
+    }, [viewMode, isDirty, lastSavedSnapshot, title, year, examType, duration, isPremium, sections]);
+
+    // Reload / tab close warning (Admin editor only) when there are unsaved changes.
+    useEffect(() => {
+        if (viewMode !== 'EDITOR' || !isDirty) return;
+
+        const onBeforeUnload = (e: BeforeUnloadEvent) => {
+            // Most browsers ignore custom text and show a generic confirmation.
+            e.preventDefault();
+            e.returnValue = '';
+        };
+
+        window.addEventListener('beforeunload', onBeforeUnload);
+        return () => window.removeEventListener('beforeunload', onBeforeUnload);
+    }, [viewMode, isDirty]);
+
+    // When exiting editor view, pop the guard entry so normal back behavior returns.
+    useEffect(() => {
+        if (viewMode !== 'LIST') return;
+        if (!backGuardArmedRef.current) return;
+        backGuardArmedRef.current = false;
+        window.history.back();
+    }, [viewMode]);
 
   // --- SAFE IMMUTABLE STATE UPDATES ---
 
   const addSection = () => {
-    const tempId = `temp-sec-${Date.now()}-${Math.random()}`;
+    const tempId = crypto.randomUUID();
     setSections([...sections, { id: tempId, name: 'New Section', questions: [] }]);
   };
 
@@ -94,7 +190,7 @@ const AdminPanel: React.FC = () => {
   const addQuestion = (sectionIndex: number) => {
     const newSections = [...sections];
     const sectionToUpdate = { ...newSections[sectionIndex] };
-    const tempId = `temp-q-${Date.now()}-${Math.random()}`;
+    const tempId = crypto.randomUUID();
     
     sectionToUpdate.questions = [
         ...sectionToUpdate.questions,
@@ -364,7 +460,7 @@ const AdminPanel: React.FC = () => {
     setIsSaving(true);
     try {
         const newExam: ExamPaper = {
-          id: editingId || Date.now().toString(),
+          id: editingId || crypto.randomUUID(),
           year,
           title,
           examType,
@@ -388,7 +484,7 @@ const AdminPanel: React.FC = () => {
 
     // Build current draft exam object
     const buildDraftExam = (): ExamPaper => ({
-        id: editingId || Date.now().toString(),
+        id: editingId || crypto.randomUUID(),
         year,
         title,
         examType,
@@ -405,6 +501,7 @@ const AdminPanel: React.FC = () => {
         try {
             setIsAutoSaving(true);
             const draft = buildDraftExam();
+            if (!draft.id || draft.id === 'new') draft.id = crypto.randomUUID();
             await onSave(draft, { silent: true });
             setLastSavedSnapshot(snapshot);
             setLastAutoSaveAt(new Date());
@@ -424,29 +521,162 @@ const AdminPanel: React.FC = () => {
         return () => clearInterval(interval);
     }, [autoSaveEnabled, viewMode, title, year, examType, duration, isPremium, sections]);
 
-  const handleBulkImport = () => {
-      const input = prompt("Paste your Exam JSON structure (sections array or full exam object):");
-      if (!input) return;
+    const aiJsonFormatTemplate = useMemo(() => {
+        const template = {
+            title: "<Exam title>",
+            year: 2025,
+            examType: "UCEED",
+            durationMinutes: 120,
+            isPremium: false,
+            sections: [
+                {
+                    name: "Part A",
+                    questions: [
+                        {
+                            text: "<Question text>",
+                            imageUrl: "",
+                            type: "MCQ",
+                            marks: 4,
+                            negativeMarks: 1,
+                            category: "",
+                            optionDetails: [
+                                { type: "text", text: "Option A", isCorrect: true },
+                                { type: "text", text: "Option B", isCorrect: false },
+                                { type: "text", text: "Option C", isCorrect: false },
+                                { type: "text", text: "Option D", isCorrect: false }
+                            ],
+                            correctAnswer: "A"
+                        }
+                    ]
+                }
+            ]
+        };
+        return JSON.stringify(template, null, 2);
+    }, []);
 
-      try {
-          const parsed = JSON.parse(input);
-          
-          if (Array.isArray(parsed)) {
-              setSections(parsed);
-          } else if (parsed.sections && Array.isArray(parsed.sections)) {
-              if(parsed.title) setTitle(parsed.title);
-              if(parsed.durationMinutes) setDuration(parsed.durationMinutes);
-              if(parsed.examType) setExamType(parsed.examType);
-              if(parsed.year) setYear(parsed.year);
-              setIsPremium(!!parsed.isPremium); 
-              setSections(parsed.sections);
-          } else {
-              alert("Invalid JSON structure. Expected an array of sections or an exam object.");
-          }
-      } catch (e) {
-          alert("Invalid JSON. Please check your syntax.");
-      }
-  };
+    const copyAiJsonFormat = async () => {
+        try {
+            await navigator.clipboard.writeText(aiJsonFormatTemplate);
+            alert('AI JSON format copied.');
+        } catch {
+            alert('Could not copy. Please select and copy manually.');
+        }
+    };
+
+    const normalizeImported = (parsed: any) => {
+        const now = Date.now();
+        const asExamObject = Array.isArray(parsed) ? { sections: parsed } : parsed;
+        if (!asExamObject || !Array.isArray(asExamObject.sections)) {
+            throw new Error('Invalid JSON structure');
+        }
+
+        const nextTitle = typeof asExamObject.title === 'string' ? asExamObject.title : title;
+        const nextYear = typeof asExamObject.year === 'number' ? asExamObject.year : year;
+        const nextExamType = typeof asExamObject.examType === 'string' ? asExamObject.examType : examType;
+        const nextDuration = typeof asExamObject.durationMinutes === 'number' ? asExamObject.durationMinutes : duration;
+        const nextIsPremium = !!asExamObject.isPremium;
+
+        const normalizeType = (raw: any): QuestionType => {
+            const t = String(raw || '').toUpperCase();
+            if (t === QuestionType.MCQ) return QuestionType.MCQ;
+            if (t === QuestionType.MSQ) return QuestionType.MSQ;
+            return QuestionType.NAT;
+        };
+
+        const normalizeOptionDetails = (qId: string, raw: any, qType: QuestionType): QuestionOption[] => {
+            let optionDetails: any[] = [];
+            if (Array.isArray(raw?.optionDetails)) optionDetails = raw.optionDetails;
+            else if (Array.isArray(raw?.option_details)) optionDetails = raw.option_details;
+            else if (Array.isArray(raw?.options)) optionDetails = raw.options.map((text: any) => ({ type: 'text', text, isCorrect: false }));
+
+            const normalized = optionDetails.map((opt, idx) => ({
+                id: typeof opt?.id === 'string' ? opt.id : `${qId}-opt-${idx}`,
+                type: opt?.type === 'image' ? 'image' : 'text',
+                text: typeof opt?.text === 'string' ? opt.text : (typeof opt === 'string' ? opt : ''),
+                imageData: typeof opt?.imageData === 'string' ? opt.imageData : undefined,
+                altText: typeof opt?.altText === 'string' ? opt.altText : undefined,
+                isCorrect: !!opt?.isCorrect,
+            } as QuestionOption));
+
+            if (qType === QuestionType.MCQ || qType === QuestionType.MSQ) {
+                while (normalized.length < 4) {
+                    const idx = normalized.length;
+                    normalized.push({ id: `${qId}-opt-${idx}`, type: 'text', text: '', isCorrect: false });
+                }
+            }
+
+            return normalized;
+        };
+
+        const deriveCorrectAnswer = (qType: QuestionType, optionDetails: QuestionOption[], rawCorrect: any) => {
+            if (rawCorrect !== undefined && rawCorrect !== null && rawCorrect !== '') return rawCorrect;
+            if (qType === QuestionType.MSQ) {
+                return optionDetails
+                    .map((o, idx) => (o.isCorrect ? String.fromCharCode(65 + idx) : null))
+                    .filter(Boolean);
+            }
+            if (qType === QuestionType.MCQ) {
+                const idx = optionDetails.findIndex((o) => o.isCorrect);
+                return idx >= 0 ? String.fromCharCode(65 + idx) : 'A';
+            }
+            return '';
+        };
+
+        const normalizedSections: Section[] = asExamObject.sections.map((sec: any, secIdx: number) => {
+            const secId = typeof sec?.id === 'string' ? sec.id : `imp-sec-${now}-${secIdx}`;
+            const secName = typeof sec?.name === 'string' ? sec.name : (typeof sec?.section_name === 'string' ? sec.section_name : `Section ${secIdx + 1}`);
+            const rawQuestions = Array.isArray(sec?.questions) ? sec.questions : [];
+
+            const questions: Question[] = rawQuestions.map((rq: any, qIdx: number) => {
+                const qId = typeof rq?.id === 'string' ? rq.id : `imp-q-${now}-${secIdx}-${qIdx}`;
+                const qType = normalizeType(rq?.type);
+                const optionDetails = normalizeOptionDetails(qId, rq, qType);
+                const correctAnswer = deriveCorrectAnswer(qType, optionDetails, rq?.correctAnswer ?? rq?.correct_answer);
+
+                return {
+                    id: qId,
+                    text: typeof rq?.text === 'string' ? rq.text : '',
+                    imageUrl: typeof rq?.imageUrl === 'string' ? rq.imageUrl : (typeof rq?.image_url === 'string' ? rq.image_url : undefined),
+                    type: qType,
+                    options: optionDetails.map((o) => o.text || ''),
+                    optionDetails,
+                    correctAnswer,
+                    marks: typeof rq?.marks === 'number' ? rq.marks : 4,
+                    negativeMarks: typeof rq?.negativeMarks === 'number' ? rq.negativeMarks : (typeof rq?.negative_marks === 'number' ? rq.negative_marks : 0),
+                    category: typeof rq?.category === 'string' ? rq.category : '',
+                };
+            });
+
+            return { id: secId, name: secName, questions };
+        });
+
+        return { nextTitle, nextYear, nextExamType, nextDuration, nextIsPremium, normalizedSections };
+    };
+
+    const handleJsonImportFile = async (file: File) => {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const { nextTitle, nextYear, nextExamType, nextDuration, nextIsPremium, normalizedSections } = normalizeImported(parsed);
+        setTitle(nextTitle);
+        setYear(nextYear);
+        setExamType(nextExamType);
+        setDuration(nextDuration);
+        setIsPremium(nextIsPremium);
+        setSections(normalizedSections);
+    };
+
+    const onJsonFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        // Allow importing the same file again
+        e.target.value = '';
+        if (!file) return;
+
+        try {
+            await handleJsonImportFile(file);
+        } catch {
+            alert('Invalid JSON file. Please check the format.');
+        }
+    };
 
   const handleExport = () => {
       const examData = {
@@ -477,7 +707,17 @@ const AdminPanel: React.FC = () => {
       {/* Top Navbar */}
       <div className="bg-white border-b border-[#E5E7EB] sticky top-0 z-30 px-8 py-4 flex justify-between items-center shadow-sm">
            <div className="flex items-center gap-4">
-                <button onClick={() => navigate(-1)} className="p-2 hover:bg-[#F3F4F6] rounded-full text-[#6B7280] transition-colors">
+                <button
+                    onClick={() => {
+                        if (viewMode === 'EDITOR' && !confirmDiscardIfDirty()) return;
+                        if (viewMode === 'EDITOR' && backGuardArmedRef.current) {
+                            window.history.go(-2);
+                            return;
+                        }
+                        navigate(-1);
+                    }}
+                    className="p-2 hover:bg-[#F3F4F6] rounded-full text-[#6B7280] transition-colors"
+                >
                     <ArrowLeft size={20}/>
                 </button>
                 <h1 className="text-xl font-bold text-[#1F2937]">Instructor Dashboard</h1>
@@ -603,11 +843,18 @@ const AdminPanel: React.FC = () => {
                         {editingId ? 'Edit Exam' : 'Exam Configuration'}
                     </h2>
                     <div className="flex gap-2">
+                        <input
+                            ref={jsonImportInputRef}
+                            type="file"
+                            accept="application/json"
+                            onChange={onJsonFileInputChange}
+                            className="hidden"
+                        />
                          <button 
                             type="button"
-                            onClick={handleBulkImport}
+                            onClick={() => jsonImportInputRef.current?.click()}
                             className="text-xs font-bold bg-[#F3F4F6] hover:bg-[#E5E7EB] text-[#4B5563] px-3 py-2 rounded flex items-center transition-colors border border-[#E5E7EB]"
-                            title="Paste JSON Data"
+                            title="Upload JSON file"
                          >
                              <FileJson size={14} className="mr-1"/> Import JSON
                          </button>
@@ -619,8 +866,40 @@ const AdminPanel: React.FC = () => {
                          >
                              <Download size={14} className="mr-1"/> Export
                          </button>
+                         <button
+                            type="button"
+                            onClick={() => setShowAiJsonFormat((v) => !v)}
+                            className="text-xs font-bold bg-[#F3F4F6] hover:bg-[#E5E7EB] text-[#4B5563] px-3 py-2 rounded flex items-center transition-colors border border-[#E5E7EB]"
+                            title="Show AI JSON format"
+                         >
+                             <FileJson size={14} className="mr-1"/>
+                             {showAiJsonFormat ? 'Hide Format' : 'AI Format'}
+                         </button>
                     </div>
                 </div>
+
+                {showAiJsonFormat && (
+                    <div className="bg-white rounded-lg shadow-sm border border-[#E5E7EB] p-6 mb-6">
+                        <div className="flex items-center justify-between mb-3">
+                            <div>
+                                <div className="text-sm font-bold text-[#1F2937]">AI JSON Format</div>
+                                <div className="text-xs text-[#6B7280]">Use this as the exact output format for your AI prompt.</div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={copyAiJsonFormat}
+                                className="text-xs font-bold bg-[#1F2937] hover:bg-black text-white px-3 py-2 rounded flex items-center transition-colors"
+                            >
+                                Copy
+                            </button>
+                        </div>
+                        <textarea
+                            value={aiJsonFormatTemplate}
+                            readOnly
+                            className="w-full h-64 p-3 font-mono text-xs bg-[#F9FAFB] text-[#111827] border border-[#E5E7EB] rounded-lg focus:outline-none"
+                        />
+                    </div>
+                )}
 
                 <div className="bg-white rounded-lg shadow-sm border border-[#E5E7EB] p-8 mb-8">
                     {/* General Settings */}
@@ -891,7 +1170,7 @@ const AdminPanel: React.FC = () => {
                                             <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e, sIdx, qIdx)} className="text-sm text-[#6B7280] w-full"/>
                                             {q.imageUrl && (
                                                 <div className="mt-4 space-y-2">
-                                                    <img src={q.imageUrl} alt="Preview" className="h-32 object-contain border p-1 bg-white rounded shadow-sm"/>
+                                                    <img src={q.imageUrl} alt="Preview" loading="lazy" className="h-32 object-contain border p-1 bg-white rounded shadow-sm"/>
                                                     <button
                                                         type="button"
                                                         onClick={() => updateQuestion(sIdx, qIdx, 'imageUrl', '')}
@@ -968,7 +1247,7 @@ const AdminPanel: React.FC = () => {
                                                                 />
                                                                 {opt.imageData && (
                                                                     <div className="flex items-start gap-3">
-                                                                        <img src={opt.imageData} alt={opt.altText || 'Option image'} className="h-28 w-auto object-contain border p-1 bg-white rounded" />
+                                                                        <img src={opt.imageData} alt={opt.altText || 'Option image'} loading="lazy" className="h-28 w-auto object-contain border p-1 bg-white rounded" />
                                                                         <div className="flex-1 space-y-2">
                                                                             <input
                                                                                 type="text"

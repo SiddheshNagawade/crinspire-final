@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import * as ReactWindow from 'react-window';
+const FixedSizeList = (ReactWindow as any).FixedSizeList;
 import { User, Info, ChevronLeft, ChevronRight, AlertTriangle, Lock, Loader2, X } from 'lucide-react';
 import { useParams, useOutletContext, useNavigate } from 'react-router-dom';
 import { ExamPaper, QuestionStatus, QuestionType, UserResponse, UserQuestionStatus } from '../types';
@@ -29,6 +31,165 @@ const StudentExamInterface: React.FC = () => {
   const currentSection = hasSections ? exam.sections[currentSectionIndex] : null;
   const hasQuestions = currentSection?.questions && currentSection.questions.length > 0;
   const currentQuestion = hasQuestions ? currentSection.questions[currentQuestionIndex] : null;
+    // Derived option lists for current question (memoized)
+    const richOptions = useMemo(() => currentQuestion?.optionDetails || [], [currentQuestion?.optionDetails]);
+    const hasRich = useMemo(() => richOptions && richOptions.length > 0, [richOptions]);
+    const computedOptions = useMemo(() => (
+        hasRich
+            ? richOptions.map((opt: any, idx: number) => ({ opt, label: String.fromCharCode(65 + idx) }))
+            : (currentQuestion?.options || []).map((text: string, idx: number) => ({ opt: { type: 'text', text }, label: String.fromCharCode(65 + idx) }))
+    ), [hasRich, richOptions, currentQuestion?.options]);
+
+    // Prefetch current and next question images (including option images)
+    useEffect(() => {
+        if (!currentSection) return;
+        const preload = (url?: string) => {
+            if (!url) return;
+            const img = new Image();
+            img.loading = 'eager';
+            img.src = url;
+        };
+        // current question image
+        preload(currentQuestion?.imageUrl);
+        // prefetch next two questions (images + option images)
+        for (let offset = 1; offset <= 2; offset++) {
+            const q = currentSection.questions[currentQuestionIndex + offset];
+            if (!q) break;
+            preload(q.imageUrl);
+            const opts = q.optionDetails || [];
+            for (const opt of opts) {
+                if (opt.type === 'image' && opt.imageData) preload(opt.imageData as string);
+            }
+        }
+    }, [currentSection, currentQuestionIndex, currentQuestion?.imageUrl]);
+  
+    // Stable handlers for memoized children
+    const onChangeSection = useCallback((idx: number) => {
+        setCurrentSectionIndex(idx);
+        setCurrentQuestionIndex(0);
+    }, []);
+    const onJumpToQuestion = useCallback((idx: number) => {
+        setCurrentQuestionIndex(idx);
+    }, []);
+
+    // Memoized subcomponents
+    const SectionTabs = useMemo(() => {
+        return React.memo(({ sections, currentIndex, onChange }: { sections: any[]; currentIndex: number; onChange: (idx: number) => void }) => (
+            <div className="flex border-b border-[#E5E7EB] px-6 bg-white">
+                {sections.map((sec, idx) => (
+                    <button
+                        key={sec.id}
+                        onClick={() => onChange(idx)}
+                        className={`px-6 py-4 text-sm font-bold flex items-center border-b-2 transition-colors focus:outline-none
+                            ${currentIndex === idx 
+                                ? 'border-[#1F2937] text-[#1F2937]'
+                                : 'border-transparent text-[#6B7280] hover:text-[#111827] hover:border-[#D1D5DB]'}`}
+                    >
+                        {sec.name}
+                        <Info size={14} className="ml-2 opacity-50"/>
+                    </button>
+                ))}
+            </div>
+        ));
+    }, []);
+
+    const QuestionPalette = useMemo(() => {
+        return React.memo(({ questions, statusMap, currentIndex, onJump }: { questions: any[]; statusMap: UserQuestionStatus; currentIndex: number; onJump: (idx: number) => void }) => {
+            const useVirtual = questions.length >= 60;
+            const Cell = ({ columnIndex, rowIndex, style }: any) => {
+                const idx = rowIndex * 4 + columnIndex;
+                if (idx >= questions.length) return null;
+                const q = questions[idx];
+                const st = statusMap[q.id];
+                let btnClass = "bg-[#D1D5DB] text-[#1F2937]";
+                if (st === QuestionStatus.NOT_ANSWERED) btnClass = "bg-[#FCD34D] text-white";
+                if (st === QuestionStatus.ANSWERED) btnClass = "bg-[#10B981] text-white";
+                if (st === QuestionStatus.MARKED_FOR_REVIEW) btnClass = "bg-[#3B82F6] rounded-full text-white";
+                if (st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW) btnClass = "bg-[#8B5CF6] rounded-full text-white ring-2 ring-[#10B981]";
+                if (idx === currentIndex) btnClass += " ring-2 ring-black ring-offset-1";
+                return (
+                    <div style={style} className="p-1">
+                        <button
+                            onClick={() => onJump(idx)}
+                            className={`h-10 w-10 flex items-center justify-center font-bold text-sm rounded shadow-sm transition-all hover:opacity-80 ${btnClass}`}
+                        >
+                            {idx + 1}
+                            {st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW && (
+                                <div className="absolute bottom-0 right-0 w-2 h-2 bg-[#10B981] rounded-full border border-white"></div>
+                            )}
+                        </button>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                    <h4 className="text-xs font-bold text-[#9CA3AF] uppercase mb-3">Choose a Question</h4>
+                    {useVirtual ? (
+                        <FixedSizeList
+                            itemCount={Math.ceil(questions.length / 4)}
+                            itemSize={52}
+                            height={400}
+                            width={4 * 56 + 4 * 12}
+                        >
+                            {({ index, style }) => (
+                                <div style={style} className="flex gap-3">
+                                    {[0,1,2,3].map((col) => {
+                                        const idx = index * 4 + col;
+                                        if (idx >= questions.length) return <div key={col} style={{ width: 56 }} />;
+                                        const q = questions[idx];
+                                        const st = statusMap[q.id];
+                                        let btnClass = "bg-[#D1D5DB] text-[#1F2937]";
+                                        if (st === QuestionStatus.NOT_ANSWERED) btnClass = "bg-[#FCD34D] text-white";
+                                        if (st === QuestionStatus.ANSWERED) btnClass = "bg-[#10B981] text-white";
+                                        if (st === QuestionStatus.MARKED_FOR_REVIEW) btnClass = "bg-[#3B82F6] rounded-full text-white";
+                                        if (st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW) btnClass = "bg-[#8B5CF6] rounded-full text-white ring-2 ring-[#10B981]";
+                                        if (idx === currentIndex) btnClass += " ring-2 ring-black ring-offset-1";
+                                        return (
+                                            <button
+                                                key={q.id}
+                                                onClick={() => onJump(idx)}
+                                                className={`h-10 w-10 flex items-center justify-center font-bold text-sm rounded shadow-sm transition-all hover:opacity-80 ${btnClass}`}
+                                            >
+                                                {idx + 1}
+                                                {st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW && (
+                                                    <div className="absolute bottom-0 right-0 w-2 h-2 bg-[#10B981] rounded-full border border-white"></div>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </FixedSizeList>
+                    ) : (
+                        <div className="grid grid-cols-4 gap-3">
+                            {questions.map((q, idx) => {
+                                const st = statusMap[q.id];
+                                let btnClass = "bg-[#D1D5DB] text-[#1F2937]";
+                                if (st === QuestionStatus.NOT_ANSWERED) btnClass = "bg-[#FCD34D] text-white";
+                                if (st === QuestionStatus.ANSWERED) btnClass = "bg-[#10B981] text-white";
+                                if (st === QuestionStatus.MARKED_FOR_REVIEW) btnClass = "bg-[#3B82F6] rounded-full text-white";
+                                if (st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW) btnClass = "bg-[#8B5CF6] rounded-full text-white ring-2 ring-[#10B981]";
+                                if (idx === currentIndex) btnClass += " ring-2 ring-black ring-offset-1";
+                                return (
+                                    <button
+                                        key={q.id}
+                                        onClick={() => onJump(idx)}
+                                        className={`h-10 w-10 flex items-center justify-center font-bold text-sm rounded shadow-sm transition-all hover:opacity-80 ${btnClass}`}
+                                    >
+                                        {idx + 1}
+                                        {st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW && (
+                                            <div className="absolute bottom-0 right-0 w-2 h-2 bg-[#10B981] rounded-full border border-white"></div>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+        });
+    }, []);
   
   // Initialization
   useEffect(() => {
@@ -238,11 +399,9 @@ const StudentExamInterface: React.FC = () => {
 
   // --- Render Helpers ---
 
-  const renderQuestionInput = () => {
+    const renderQuestionInput = () => {
     if (!currentQuestion) return null;
     const val = responses[currentQuestion.id];
-        const richOptions = currentQuestion.optionDetails || [];
-        const hasRich = richOptions && richOptions.length > 0;
 
     if (currentQuestion.type === QuestionType.NAT) {
         const textVal = (val as string) || '';
@@ -289,7 +448,7 @@ const StudentExamInterface: React.FC = () => {
     if (currentQuestion.type === QuestionType.MCQ) {
         return (
             <div className="mt-8 space-y-4">
-                {(hasRich ? richOptions.map((opt, idx) => ({ opt, label: String.fromCharCode(65 + idx) })) : (currentQuestion.options || []).map((text, idx) => ({ opt: { type: 'text', text }, label: String.fromCharCode(65 + idx) as string })) ).map(({ opt, label }) => (
+                {computedOptions.map(({ opt, label }: any) => (
                     <label key={label} className={`flex items-center p-4 rounded-lg border cursor-pointer transition-all ${val === label ? 'border-[#3B82F6] bg-blue-50' : 'border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}>
                         <input 
                             type="radio" 
@@ -304,6 +463,7 @@ const StudentExamInterface: React.FC = () => {
                                     <img 
                                         src={opt.imageData as string} 
                                         alt={(opt as any).altText || `Option`} 
+                                        loading="lazy"
                                         className="max-h-[151px] max-w-[188px] object-contain border rounded bg-white cursor-pointer hover:opacity-80 transition-opacity"
                                         onClick={() => setFullscreenImage(opt.imageData as string)}
                                     />
@@ -323,7 +483,7 @@ const StudentExamInterface: React.FC = () => {
         const selected = (val as string[]) || [];
         return (
             <div className="mt-8 space-y-4">
-                {(hasRich ? richOptions.map((opt, idx) => ({ opt, label: String.fromCharCode(65 + idx) })) : (currentQuestion.options || []).map((text, idx) => ({ opt: { type: 'text', text }, label: String.fromCharCode(65 + idx) as string })) ).map(({ opt, label }) => (
+                {computedOptions.map(({ opt, label }: any) => (
                     <label key={label} className={`flex items-center p-4 rounded-lg border cursor-pointer transition-all ${selected.includes(label) ? 'border-[#3B82F6] bg-blue-50' : 'border-[#E5E7EB] hover:bg-[#F9FAFB]'}`}>
                         <input 
                             type="checkbox" 
@@ -343,6 +503,7 @@ const StudentExamInterface: React.FC = () => {
                                     <img 
                                         src={(opt as any).imageData} 
                                         alt={(opt as any).altText || `Option`} 
+                                        loading="lazy"
                                         className="max-h-[151px] max-w-[188px] object-contain border rounded bg-white cursor-pointer hover:opacity-80 transition-opacity"
                                         onClick={() => setFullscreenImage((opt as any).imageData)}
                                     />
@@ -419,22 +580,8 @@ const StudentExamInterface: React.FC = () => {
         
         {/* Left: Question Area */}
         <div className="flex-1 flex flex-col bg-white overflow-hidden relative z-0">
-           {/* Section Tabs */}
-           <div className="flex border-b border-[#E5E7EB] px-6 bg-white">
-               {exam.sections.map((sec, idx) => (
-                   <button
-                        key={sec.id}
-                        onClick={() => changeSection(idx)}
-                        className={`px-6 py-4 text-sm font-bold flex items-center border-b-2 transition-colors focus:outline-none
-                            ${currentSectionIndex === idx 
-                                ? 'border-[#1F2937] text-[#1F2937]' 
-                                : 'border-transparent text-[#6B7280] hover:text-[#111827] hover:border-[#D1D5DB]'}`}
-                   >
-                       {sec.name}
-                       <Info size={14} className="ml-2 opacity-50"/>
-                   </button>
-               ))}
-           </div>
+                     {/* Section Tabs */}
+                     <SectionTabs sections={exam.sections} currentIndex={currentSectionIndex} onChange={onChangeSection} />
 
            {/* Question Header */}
            <div className="px-8 py-4 flex justify-between items-center bg-[#F8F9FA] border-b border-[#E5E7EB]">
@@ -466,6 +613,7 @@ const StudentExamInterface: React.FC = () => {
                             <img 
                                 src={currentQuestion.imageUrl} 
                                 alt="Question" 
+                                loading="lazy"
                                 className="max-h-[302px] max-w-[680px] object-contain border border-[#E5E7EB] rounded shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
                                 onClick={() => setFullscreenImage(currentQuestion.imageUrl)}
                             />
@@ -544,40 +692,8 @@ const StudentExamInterface: React.FC = () => {
                     <div className="flex items-center"><span className="w-4 h-4 bg-[#3B82F6] rounded-full mr-2"></span> Marked</div>
                 </div>
 
-                {/* Palette Grid */}
-                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                    <h4 className="text-xs font-bold text-[#9CA3AF] uppercase mb-3">Choose a Question</h4>
-                    <div className="grid grid-cols-4 gap-3">
-                        {currentSection.questions.map((q, idx) => {
-                            const st = status[q.id];
-                            
-                            // Color Logic from UI Sheet
-                            let btnClass = "bg-[#D1D5DB] text-[#1F2937]"; // Not Visited
-                            if (st === QuestionStatus.NOT_ANSWERED) btnClass = "bg-[#FCD34D] text-white";
-                            if (st === QuestionStatus.ANSWERED) btnClass = "bg-[#10B981] text-white";
-                            if (st === QuestionStatus.MARKED_FOR_REVIEW) btnClass = "bg-[#3B82F6] rounded-full text-white";
-                            if (st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW) btnClass = "bg-[#8B5CF6] rounded-full text-white ring-2 ring-[#10B981]";
-                            
-                            // Highlight current question
-                            if (idx === currentQuestionIndex) {
-                                btnClass += " ring-2 ring-black ring-offset-1";
-                            }
-
-                            return (
-                                <button
-                                    key={q.id}
-                                    onClick={() => jumpToQuestion(idx)}
-                                    className={`h-10 w-10 flex items-center justify-center font-bold text-sm rounded shadow-sm transition-all hover:opacity-80 ${btnClass}`}
-                                >
-                                    {idx + 1}
-                                    {st === QuestionStatus.ANSWERED_MARKED_FOR_REVIEW && (
-                                        <div className="absolute bottom-0 right-0 w-2 h-2 bg-[#10B981] rounded-full border border-white"></div>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
+                                {/* Palette Grid */}
+                                <QuestionPalette questions={currentSection.questions} statusMap={status} currentIndex={currentQuestionIndex} onJump={onJumpToQuestion} />
             </div>
         )}
       </div>

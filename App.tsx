@@ -167,13 +167,37 @@ const App: React.FC = () => {
              return;
         }
 
-        const { data: questions, error: questionsError } = await supabase
+        // Questions: prefer deterministic DB ordering via `position`.
+        // IMPORTANT: Order by paper_id (to group by exam), then by section (grouping within exam),
+        // then by position (per-section order), then created_at (as fallback).
+        // If the column doesn't exist (e.g. migration not applied / undone), fall back to created_at.
+        let questions: any[] | null = null;
+        const { data: questionsByPosition, error: questionsByPositionError } = await supabase
             .from('questions')
             .select('*')
+            .order('paper_id', { ascending: true })
+            .order('section_name', { ascending: true })
             .order('position', { ascending: true })
             .order('created_at', { ascending: true });
 
-        if (questionsError) throw questionsError;
+        if (questionsByPositionError) {
+            const msg = (questionsByPositionError as any)?.message || '';
+            if (typeof msg === 'string' && msg.toLowerCase().includes('position') && msg.toLowerCase().includes('does not exist')) {
+                const { data: questionsByCreatedAt, error: questionsByCreatedAtError } = await supabase
+                    .from('questions')
+                    .select('*')
+                    .order('paper_id', { ascending: true })
+                    .order('section_name', { ascending: true })
+                    .order('created_at', { ascending: true });
+
+                if (questionsByCreatedAtError) throw questionsByCreatedAtError;
+                questions = questionsByCreatedAt || [];
+            } else {
+                throw questionsByPositionError;
+            }
+        } else {
+            questions = questionsByPosition || [];
+        }
 
         const reconstructedExams: ExamPaper[] = paperList.map((p: any) => {
             const paperQuestions = questions?.filter((q: any) => q.paper_id === p.id) || [];
@@ -272,7 +296,57 @@ const App: React.FC = () => {
         console.error("Blob conversion failed", e);
         throw e;
     }
-  }
+  };
+
+  // Helper: Deep compare two questions (detect edits)
+  const questionsAreEqual = (q1: any, q2: any): boolean => {
+    return (
+      q1.text === q2.text &&
+      q1.type === q2.type &&
+      q1.marks === q2.marks &&
+      q1.negative_marks === q2.negative_marks &&
+      q1.image_url === q2.image_url &&
+      q1.category === q2.category &&
+      q1.section_name === q2.section_name &&
+      JSON.stringify(q1.options) === JSON.stringify(q2.options) &&
+      JSON.stringify(q1.option_details) === JSON.stringify(q2.option_details) &&
+      JSON.stringify(q1.correct_answer) === JSON.stringify(q2.correct_answer)
+    );
+  };
+
+  // Helper: Identify which questions changed (for selective UPSERT)
+  const identifyChangedQuestions = (
+    existingQuestions: any[],
+    newQuestions: any[],
+    paperId: string
+  ): { toInsert: any[]; toDelete: string[]; unchanged: string[] } => {
+    const existingMap = new Map(existingQuestions.map(q => [q.id, q]));
+    const newMap = new Map(newQuestions.map(q => [q.id, q]));
+    const unchanged: string[] = [];
+    const toInsert: any[] = [];
+    const toDelete: string[] = [];
+
+    // Check for updates and new inserts
+    newQuestions.forEach((newQ) => {
+      const existing = existingMap.get(newQ.id);
+      if (!existing) {
+        toInsert.push(newQ); // New question
+      } else if (!questionsAreEqual(existing, newQ)) {
+        toInsert.push(newQ); // Question was edited
+      } else {
+        unchanged.push(newQ.id); // No changes
+      }
+    });
+
+    // Check for deletions
+    existingQuestions.forEach((existingQ) => {
+      if (!newMap.has(existingQ.id)) {
+        toDelete.push(existingQ.id); // Question was removed
+      }
+    });
+
+    return { toInsert, toDelete, unchanged };
+  };
 
     const handleAdminSave = async (savedExam: ExamPaper, options?: { silent?: boolean }) => {
     try {
@@ -311,17 +385,21 @@ const App: React.FC = () => {
         
         const paperId = paperData.id;
 
-        const { error: deleteError } = await supabase
+        // SELECTIVE UPSERT: Only update questions that changed
+        // Fetch existing questions with all fields to compare
+        const { data: existingQuestionsData, error: fetchError } = await supabase
             .from('questions')
-            .delete()
+            .select('*')
             .eq('paper_id', paperId);
-            
-        if (deleteError) throw deleteError;
 
+        if (fetchError) throw fetchError;
+
+        const existingQuestions = existingQuestionsData || [];
         const questionsToInsert = [];
 
         for (const section of savedExam.sections) {
-            for (const q of section.questions) {
+            for (let qIdx = 0; qIdx < section.questions.length; qIdx++) {
+                const q = section.questions[qIdx];
                 let finalImageUrl = q.imageUrl;
 
                 if (q.imageUrl && q.imageUrl.startsWith('data:')) {
@@ -367,6 +445,7 @@ const App: React.FC = () => {
                 }
 
                 questionsToInsert.push({
+                    id: q.id, // IMPORTANT: preserve existing IDs for updates
                     paper_id: paperId,
                     section_name: section.name,
                     text: q.text,
@@ -377,25 +456,72 @@ const App: React.FC = () => {
                     options: q.options || [], 
                     option_details: finalOptionDetails || null,
                     correct_answer: q.correctAnswer, 
-                    category: q.category
+                    category: q.category,
+                    position: qIdx + 1  // Position is 1-indexed within section
                 });
             }
         }
+
+        // SELECTIVE UPDATE: Use diffing to only update changed questions
+        const { toInsert, toDelete, unchanged } = identifyChangedQuestions(
+            existingQuestions,
+            questionsToInsert,
+            paperId
+        );
+
+        console.log(`📊 Save efficiency: ${unchanged.length} unchanged, ${toInsert.length} to update, ${toDelete.length} to delete`);
+
+        // SAFE DELETION: Only delete questions that are truly removed
+        if (toDelete.length > 0) {
+            const { error: deleteError } = await supabase
+                .from('questions')
+                .delete()
+                .in('id', toDelete);
+            
+            if (deleteError) {
+                console.warn('Could not delete removed questions:', deleteError);
+                // Continue anyway
+            }
+        }
         
-        if (questionsToInsert.length > 0) {
-            // Add position index to preserve insertion order
-            const questionsWithPosition = questionsToInsert.map((q, index) => ({
-                ...q,
-                position: index + 1
-            }));
-            const { error: insertError } = await supabase.from('questions').insert(questionsWithPosition);
-            if (insertError) throw insertError;
+        if (toInsert.length > 0) {
+            // Positions are already set from UI array indices (qIdx + 1)
+            // This preserves exact order as entered in the interface
+
+            // Gracefully handle schema cache issues (position/option_details columns)
+            const { error: insertError } = await supabase.from('questions').upsert(toInsert, { onConflict: 'id' });
+            if (insertError) {
+                const msg = (insertError as any)?.message?.toLowerCase?.() || '';
+                const isSchemaCache = msg.includes('schema cache') || msg.includes("could not find");
+
+                if (isSchemaCache) {
+                    console.warn('⚠️ Schema cache issue detected. Retrying without problematic columns...');
+                    
+                    // Strip ALL potentially problematic columns (option_details and position)
+                    const fallbackQuestions = toInsert.map((q: any) => {
+                        const copy = { ...q };
+                        delete copy.option_details;
+                        delete copy.position;
+                        return copy;
+                    });
+
+                    const { error: fallbackError } = await supabase.from('questions').upsert(fallbackQuestions, { onConflict: 'id' });
+                    if (fallbackError) {
+                        console.error('Fallback upsert also failed:', fallbackError);
+                        throw fallbackError;
+                    }
+                    
+                    console.log('✅ Saved successfully using fallback (without option_details/position)');
+                } else {
+                    throw insertError;
+                }
+            }
         }
 
-                await fetchExams();
-                if (!options?.silent) {
-                    alert('✅ Exam saved successfully!');
-                }
+        await fetchExams();
+        if (!options?.silent) {
+            alert(`✅ Exam saved! (${toInsert.length} question${toInsert.length !== 1 ? 's' : ''} updated)`);
+        }
     } catch (error: any) {
         console.error('Save error details:', error);
         
@@ -479,7 +605,7 @@ const App: React.FC = () => {
             score += q.marks;
             correctCount++;
         } else {
-            score -= q.negativeMarks;
+            score -= Math.abs(q.negativeMarks);
             wrongCount++;
         }
       });
@@ -557,7 +683,7 @@ const App: React.FC = () => {
                 ? 0
                 : isCorrect
                 ? q.marks
-                : -q.negativeMarks;
+                : -Math.abs(q.negativeMarks);
 
             totalMarks += marksEarned;
 
