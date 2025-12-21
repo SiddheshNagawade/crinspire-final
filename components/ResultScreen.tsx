@@ -3,6 +3,7 @@ import { QuestionType } from '../types';
 import { ArrowLeft, CheckCircle, XCircle, MinusCircle, BarChart2, PieChart, Target } from 'lucide-react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { markExamAsCompleted } from '../utils/examUtils';
+import { isNATAnswerCorrect } from '../utils/natValidation';
 
 interface CategoryAnalysis {
   name: string;
@@ -114,7 +115,12 @@ const ResultScreen: React.FC = () => {
         return; 
       }
 
-      if (q.type === QuestionType.NAT || q.type === QuestionType.MCQ) {
+      if (q.type === QuestionType.NAT) {
+         // Use range-aware validation for NAT
+         if (String(userAns).trim().length > 0 && String(q.correctAnswer).trim().length > 0) {
+           isCorrect = isNATAnswerCorrect(String(userAns).trim(), String(q.correctAnswer).trim());
+         }
+      } else if (q.type === QuestionType.MCQ) {
          if (String(userAns).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase()) {
            isCorrect = true;
          }
@@ -166,7 +172,12 @@ const ResultScreen: React.FC = () => {
 
           const userAns = responses[q.id];
           let isCorrect = false;
-           if (q.type === QuestionType.NAT || q.type === QuestionType.MCQ) {
+           if (q.type === QuestionType.NAT) {
+                // Use range-aware validation for NAT
+                if (String(userAns).trim().length > 0 && String(q.correctAnswer).trim().length > 0) {
+                  isCorrect = isNATAnswerCorrect(String(userAns).trim(), String(q.correctAnswer).trim());
+                }
+           } else if (q.type === QuestionType.MCQ) {
                 if (String(userAns).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase()) isCorrect = true;
            } else if (q.type === QuestionType.MSQ) {
                const userArr = Array.isArray(userAns) ? userAns.sort() : [];

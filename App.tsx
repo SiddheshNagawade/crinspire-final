@@ -9,6 +9,7 @@ import { checkCurrentUserAdminStatus } from './utils/adminAuth';
 import { loadRazorpayScript, initiatePayment, openRazorpayCheckout, verifyPayment } from './utils/paymentUtils';
 import { SUBSCRIPTION_PLANS } from './config/razorpay';
 import Toast from './components/Toast';
+import { isNATAnswerCorrect } from './utils/natValidation';
 
 type SubscriptionTier = 'FREE' | 'PRO_MONTHLY' | 'PRO_SAVER';
 
@@ -422,8 +423,41 @@ const App: React.FC = () => {
         }
 
         // PERSIST SECTION ORDER: Save sections to the sections table with explicit positions
-        // Note: We upsert by (paper_id, name) constraint, so we don't include section.id
-        // This allows Supabase to either insert new or update existing sections
+        // Important: We need to handle renames and deletes properly
+        // 1. Fetch existing sections for this paper
+        // 2. Delete sections that no longer exist
+        // 3. Upsert new/renamed sections
+        
+        const { data: existingSections, error: fetchSectionsError } = await supabase
+            .from('sections')
+            .select('*')
+            .eq('paper_id', paperId);
+
+        if (!fetchSectionsError && existingSections) {
+            // Get section names that are being saved
+            const newSectionNames = new Set(savedExam.sections.map(s => s.name));
+            
+            // Find sections that were deleted (exist in DB but not in current UI)
+            const sectionsToDelete = existingSections
+                .filter(s => !newSectionNames.has(s.name))
+                .map(s => s.id);
+            
+            // Delete removed sections
+            if (sectionsToDelete.length > 0) {
+                console.log('🗑️ Deleting removed sections:', sectionsToDelete);
+                const { error: deleteError } = await supabase
+                    .from('sections')
+                    .delete()
+                    .in('id', sectionsToDelete);
+                
+                if (deleteError) {
+                    console.warn('⚠️ Could not delete removed sections:', deleteError);
+                    // Continue anyway - we'll still upsert the new ones
+                }
+            }
+        }
+
+        // Now upsert all current sections (handles renames automatically since we deleted old names)
         const sectionsToUpsert = savedExam.sections.map((section, idx) => ({
             paper_id: paperId,
             name: section.name,
@@ -465,6 +499,14 @@ const App: React.FC = () => {
 
         const existingQuestions = existingQuestionsData || [];
         const questionsToInsert = [];
+        
+        // Build a set of all section names that still exist
+        const activeSectionNames = new Set(savedExam.sections.map(s => s.name));
+        
+        // Questions from deleted sections need to be removed
+        const questionsFromDeletedSections = existingQuestions
+            .filter(q => !activeSectionNames.has(q.section_name))
+            .map(q => q.id);
 
         for (let sIdx = 0; sIdx < savedExam.sections.length; sIdx++) {
             const section = savedExam.sections[sIdx];
@@ -545,14 +587,17 @@ const App: React.FC = () => {
             paperId
         );
 
-        console.log(`📊 Save efficiency: ${unchanged.length} unchanged, ${toInsert.length} to update, ${toDelete.length} to delete`);
+        // Combine questions from deleted sections with the normal deletion list
+        const allQuestionsToDelete = [...new Set([...toDelete, ...questionsFromDeletedSections])];
 
-        // SAFE DELETION: Only delete questions that are truly removed
-        if (toDelete.length > 0) {
+        console.log(`📊 Save efficiency: ${unchanged.length} unchanged, ${toInsert.length} to update, ${allQuestionsToDelete.length} to delete (including ${questionsFromDeletedSections.length} from deleted sections)`);
+
+        // SAFE DELETION: Delete all questions that are truly removed (including from deleted sections)
+        if (allQuestionsToDelete.length > 0) {
             const { error: deleteError } = await supabase
                 .from('questions')
                 .delete()
-                .in('id', toDelete);
+                .in('id', allQuestionsToDelete);
             
             if (deleteError) {
                 console.warn('Could not delete removed questions:', deleteError);
@@ -665,7 +710,10 @@ const App: React.FC = () => {
 
         if (!isAttempted) return;
 
-        if (q.type === QuestionType.NAT || q.type === QuestionType.MCQ) {
+        if (q.type === QuestionType.NAT) {
+            // For NAT, use range-aware validation
+            isCorrect = isNATAnswerCorrect(String(userAns).trim(), String(q.correctAnswer).trim());
+        } else if (q.type === QuestionType.MCQ) {
             if (String(userAns).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase()) {
                 isCorrect = true;
             }
@@ -743,7 +791,8 @@ const App: React.FC = () => {
             if (q.type === QuestionType.NAT) {
                 selectedValue = typeof userAns === 'string' ? userAns : undefined;
                 correctValue = typeof q.correctAnswer === 'string' ? q.correctAnswer : undefined;
-                isCorrect = isAttempted && selectedValue !== undefined && correctValue !== undefined && selectedValue.trim().toLowerCase() === correctValue.trim().toLowerCase();
+                // Use range-aware validation for NAT
+                isCorrect = isAttempted && selectedValue !== undefined && correctValue !== undefined && isNATAnswerCorrect(selectedValue.trim(), correctValue.trim());
             } else if (q.type === QuestionType.MCQ) {
                 selectedOptionIds = userAns ? [String(userAns)] : [];
                 const correct = correctOptionIds[0];

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { QuestionType } from '../types';
+import { formatNATAnswer, getNATAnswerRangeDisplay } from '../utils/natValidation';
 
 interface StudentAnswer {
   question_id: string;
@@ -258,7 +259,10 @@ const ExamReview: React.FC = () => {
               </div>
               <div className="p-4 rounded border border-blue-500 bg-blue-50">
                 <div className="text-sm text-gray-600 font-semibold">Correct Answer</div>
-                <div className="text-xl font-bold text-gray-900">{currentAnswer.correct_value || 'N/A'}</div>
+                <div className="text-xl font-bold text-gray-900">{formatNATAnswer(currentAnswer.correct_value) || 'N/A'}</div>
+                {currentAnswer.correct_value && (
+                  <div className="text-sm text-blue-600 mt-2">{getNATAnswerRangeDisplay(currentAnswer.correct_value)}</div>
+                )}
               </div>
             </div>
           ) : (
