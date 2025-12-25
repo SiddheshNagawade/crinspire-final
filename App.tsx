@@ -77,10 +77,20 @@ const App: React.FC = () => {
 
   // --- Supabase Data Fetching ---
 
-  useEffect(() => {
-      checkUserSession();
-      fetchExams();
-  }, []);
+    useEffect(() => {
+            checkUserSession();
+            // Avoid heavy full exam load on initial mount unless on admin route
+            if (location.pathname.startsWith('/admin')) {
+                fetchExams();
+            }
+    }, []);
+
+    useEffect(() => {
+            // When navigating into admin, load exams lazily
+            if (location.pathname.startsWith('/admin')) {
+                fetchExams();
+            }
+    }, [location.pathname]);
 
   useEffect(() => {
       const stored = localStorage.getItem('last_submission_id');

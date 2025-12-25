@@ -1,31 +1,42 @@
 import React, { useState } from 'react';
 import { User, ChevronRight, ChevronLeft, AlertCircle } from 'lucide-react';
-import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
+import { useParams, useNavigate, useOutletContext, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { getExamDetail, examDetailKey } from '../utils/examQueries';
 
 const InstructionScreen: React.FC = () => {
   const { examId } = useParams();
   const navigate = useNavigate();
-  const { exams, studentDetails } = useOutletContext<any>();
-  
-  const exam = exams.find((e: any) => e.id === examId);
+  const { studentDetails } = useOutletContext<any>();
+  const location = useLocation();
+  const examSummary = (location.state as any)?.examSummary;
+
+  // Fetch full exam detail in parallel; cache warms before Start Exam
+  const { data: examDetail, isLoading: loadingDetail } = useQuery({
+    queryKey: examDetailKey(examId as string),
+    queryFn: () => getExamDetail(examId as string),
+    enabled: !!examId,
+  });
   const studentName = studentDetails?.name || "Guest User";
   const email = studentDetails?.email || "guest@example.com";
 
   const [agreed, setAgreed] = useState(false);
   const [page, setPage] = useState<1 | 2>(1);
 
-  const handleStart = () => {
-     navigate(`/exam/${examId}`);
-  };
+    const handleStart = () => {
+      // Navigate; StudentExamInterface will read examDetail from cache
+      navigate(`/exam/${examId}`);
+    };
 
-  if (!exam) return <div className="p-8">Loading exam details...</div>;
+  // Render using summary if available; fallback to loading
+  if (!examSummary && !examDetail) return <div className="p-8">Loading exam details...</div>;
 
   return (
     <div className="flex flex-col h-screen bg-white font-sans text-[#111827]">
       {/* Header */}
       <div className="h-16 bg-white border-b border-[#E5E7EB] flex items-center justify-between px-6 shadow-sm z-10">
         <h1 className="text-xl font-bold text-[#1F2937]">Instructions</h1>
-        <div className="text-sm text-[#6B7280] font-medium">{exam.title}</div>
+        <div className="text-sm text-[#6B7280] font-medium">{examSummary?.title || examDetail?.title}</div>
       </div>
 
       <div className="flex flex-1 overflow-hidden bg-[#F3F4F6]">
@@ -38,7 +49,7 @@ const InstructionScreen: React.FC = () => {
               <h3 className="font-bold border-b border-[#E5E7EB] pb-2 mb-4 text-[#1F2937] uppercase text-sm tracking-wider">General Instructions</h3>
               
               <ol className="list-decimal pl-6 space-y-3 text-[#4B5563] leading-relaxed text-sm md:text-base">
-                <li>Total duration of examination is <span className="font-bold text-[#1F2937]">{exam.durationMinutes} minutes</span>.</li>
+                <li>Total duration of examination is <span className="font-bold text-[#1F2937]">{(examSummary?.durationMinutes ?? examDetail?.durationMinutes) || 120} minutes</span>.</li>
                 <li>The clock will be set at the server. The countdown timer in the top right corner of screen will display the remaining time available for you to complete the examination. When the timer reaches zero, the examination will end by itself. You will not be required to end or submit your examination.</li>
                 <li>The Question Palette displayed on the right side of screen will show the status of each question using one of the following symbols:
                   <div className="mt-6 mb-6 grid gap-3 p-4 bg-[#F9FAFB] rounded-lg border border-[#E5E7EB]">

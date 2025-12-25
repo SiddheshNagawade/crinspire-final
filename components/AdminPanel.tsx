@@ -1,15 +1,32 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, Image as ImageIcon, LayoutList, Edit, Clock, ShieldCheck, PlayCircle, FileJson, Download, Crown, Check, Loader2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { Question, QuestionOption, QuestionType, Section, ExamPaper } from '../types';
 import { getMSQPreview } from '../utils/msq';
 import LoadingScreen from './LoadingScreen';
-import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useOutletContext, useNavigate, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { getExamsSummary, getExamDetail, examDetailKey } from '../utils/examQueries';
 
 const AdminPanel: React.FC = () => {
   const navigate = useNavigate();
-  const { exams: existingExams, handleAdminSave: onSave, handleDeleteExam: onDelete } = useOutletContext<any>();
+  const { examId } = useParams();
+  const { handleAdminSave: onSave, handleDeleteExam: onDelete } = useOutletContext<any>();
   
-  const [viewMode, setViewMode] = useState<'LIST' | 'EDITOR'>('LIST');
+  // Load summaries for list view
+  const { data: examsSummary, isLoading: loadingSummaries } = useQuery({
+    queryKey: ['examsSummary'],
+    queryFn: getExamsSummary,
+    enabled: !examId, // Only load summaries when in list view
+  });
+  
+  // Load full detail when editing specific exam
+  const { data: examDetail, isLoading: loadingDetail } = useQuery({
+    queryKey: examDetailKey(examId as string),
+    queryFn: () => getExamDetail(examId as string),
+    enabled: !!examId,
+  });
+  
+  const [viewMode, setViewMode] = useState<'LIST' | 'EDITOR'>(examId ? 'EDITOR' : 'LIST');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -19,6 +36,10 @@ const AdminPanel: React.FC = () => {
     const [lastAutoSaveAt, setLastAutoSaveAt] = useState<Date | null>(null);
     const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>('');
         const [showAiJsonFormat, setShowAiJsonFormat] = useState(false);
+        const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+        
+        // Ref to track total questions
+        const editorContainerRef = useRef<HTMLDivElement>(null);
 
         const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
         const backGuardArmedRef = useRef(false);
@@ -47,32 +68,14 @@ const AdminPanel: React.FC = () => {
         return window.confirm('You have unsaved changes. Leave without saving?');
     };
   
-  const handleEditExam = (exam: ExamPaper) => {
-      setEditingId(exam.id);
-      setYear(exam.year);
-      setTitle(exam.title);
-      setExamType(exam.examType);
-      setDuration(exam.durationMinutes);
-      setIsPremium(!!exam.isPremium);
-      // Deep copy sections to avoid mutating props directly
-      const copiedSections = JSON.parse(JSON.stringify(exam.sections));
-      setSections(copiedSections);
-
-      // Establish dirty-check baseline for back warning + autosave
-      setLastSavedSnapshot(JSON.stringify({
-          title: exam.title,
-          year: exam.year,
-          examType: exam.examType,
-          duration: exam.durationMinutes,
-          isPremium: !!exam.isPremium,
-          sections: copiedSections
-      }));
-      setLastAutoSaveAt(null);
-
-      setViewMode('EDITOR');
+  const handleEditExam = (examSummary: any) => {
+      // Navigate to dedicated edit route for staged loading
+      navigate(`/admin/edit/${examSummary.id}`);
   };
 
   const handleCreateNew = () => {
+      // Navigate to /admin for list view, reset state for new exam
+      navigate('/admin');
       setEditingId(null);
       setYear(new Date().getFullYear());
       setTitle('');
@@ -96,7 +99,34 @@ const AdminPanel: React.FC = () => {
       setViewMode('EDITOR');
   };
 
-    // Browser back button warning (Admin editor only). This does NOT block tab close/refresh.
+    // Hydrate editor when examDetail loads from URL
+  useEffect(() => {
+    if (examDetail && examId) {
+      setEditingId(examDetail.id);
+      setYear(examDetail.year);
+      setTitle(examDetail.title);
+      setExamType(examDetail.examType);
+      setDuration(examDetail.durationMinutes);
+      setIsPremium(!!examDetail.isPremium);
+      const copiedSections = JSON.parse(JSON.stringify(examDetail.sections));
+      setSections(copiedSections);
+      
+      setLastSavedSnapshot(JSON.stringify({
+          title: examDetail.title,
+          year: examDetail.year,
+          examType: examDetail.examType,
+          duration: examDetail.durationMinutes,
+          isPremium: !!examDetail.isPremium,
+          sections: copiedSections
+      }));
+      setLastAutoSaveAt(null);
+      setViewMode('EDITOR');
+    } else if (!examId) {
+      setViewMode('LIST');
+    }
+  }, [examDetail, examId]);
+
+  // Browser back button warning (Admin editor only). This does NOT block tab close/refresh.
     // We add a same-URL history guard entry so back doesn't unmount the editor state.
     useEffect(() => {
         if (viewMode !== 'EDITOR') return;
@@ -147,7 +177,115 @@ const AdminPanel: React.FC = () => {
         window.history.back();
     }, [viewMode]);
 
+    // Track current question index based on scroll position
+    useEffect(() => {
+        if (viewMode !== 'EDITOR') return;
+
+        const handleScroll = () => {
+            const allQuestions = [];
+            for (let sIdx = 0; sIdx < sections.length; sIdx++) {
+                for (let qIdx = 0; qIdx < sections[sIdx].questions.length; qIdx++) {
+                    const elem = document.getElementById(`question-${sIdx}-${qIdx}`);
+                    if (elem) {
+                        allQuestions.push({ index: sIdx * 1000 + qIdx, elem });
+                    }
+                }
+            }
+
+            if (allQuestions.length === 0) return;
+
+            // Find which question is closest to top of viewport (accounting for fixed header)
+            const headerHeight = 200; // Approximate height of fixed header
+            let closestIndex = 0;
+            let closestDistance = Infinity;
+
+            allQuestions.forEach((q) => {
+                const rect = q.elem.getBoundingClientRect();
+                const distance = Math.abs(rect.top - headerHeight);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestIndex = q.index;
+                }
+            });
+
+            setCurrentQuestionIndex(closestIndex);
+        };
+
+        window.addEventListener('scroll', handleScroll, { passive: true });
+        return () => window.removeEventListener('scroll', handleScroll);
+    }, [viewMode, sections.length]);
+
+
   // --- SAFE IMMUTABLE STATE UPDATES ---
+
+  // Calculate total questions
+  const totalQuestions = useMemo(() => {
+    return sections.reduce((sum, section) => sum + section.questions.length, 0);
+  }, [sections]);
+
+  // Get all questions in order
+  const getAllQuestions = () => {
+    const allQuestions = [];
+    for (let sIdx = 0; sIdx < sections.length; sIdx++) {
+      for (let qIdx = 0; qIdx < sections[sIdx].questions.length; qIdx++) {
+        allQuestions.push({ sIdx, qIdx });
+      }
+    }
+    return allQuestions;
+  };
+
+  // Get current question number (1-indexed)
+  const getCurrentQuestionNumber = () => {
+    const allQuestions = getAllQuestions();
+    for (let i = 0; i < allQuestions.length; i++) {
+      const q = allQuestions[i];
+      const elemIndex = q.sIdx * 1000 + q.qIdx;
+      if (elemIndex === currentQuestionIndex) {
+        return i + 1;
+      }
+    }
+    return totalQuestions > 0 ? 1 : 0;
+  };
+
+  // Navigate to specific question
+  const scrollToQuestion = (sIdx: number, qIdx: number) => {
+    const elem = document.getElementById(`question-${sIdx}-${qIdx}`);
+    if (elem) {
+      setTimeout(() => {
+        elem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Update current index after scroll
+        const index = sIdx * 1000 + qIdx;
+        setCurrentQuestionIndex(index);
+      }, 50);
+    }
+  };
+
+  // Navigate to previous question
+  const goToPreviousQuestion = () => {
+    const allQuestions = getAllQuestions();
+    if (allQuestions.length === 0) return;
+
+    const currentNum = getCurrentQuestionNumber();
+    if (currentNum > 1) {
+      const prevIndex = currentNum - 2;  // Convert to 0-indexed and go back one
+      if (prevIndex >= 0) {
+        const q = allQuestions[prevIndex];
+        scrollToQuestion(q.sIdx, q.qIdx);
+      }
+    }
+  };
+
+  // Navigate to next question
+  const goToNextQuestion = () => {
+    const allQuestions = getAllQuestions();
+    if (allQuestions.length === 0) return;
+
+    const currentNum = getCurrentQuestionNumber();
+    if (currentNum < allQuestions.length) {
+      const q = allQuestions[currentNum];
+      scrollToQuestion(q.sIdx, q.qIdx);
+    }
+  };
 
   const addSection = () => {
     const tempId = crypto.randomUUID();
@@ -697,8 +835,8 @@ const AdminPanel: React.FC = () => {
   };
 
   // Filter Logic for List View
-  const availableCategories = ['ALL', ...Array.from(new Set((existingExams || []).map((e: ExamPaper) => e.examType || 'UCEED')))];
-  const filteredExams = (existingExams || []).filter((e: ExamPaper) => selectedCategory === 'ALL' || e.examType === selectedCategory);
+  const availableCategories = ['ALL', ...Array.from(new Set((examsSummary || []).map((e: any) => e.examType || 'UCEED')))];
+  const filteredExams = (examsSummary || []).filter((e: any) => selectedCategory === 'ALL' || e.examType === selectedCategory);
 
   return (
     <div className="min-h-screen bg-[#F3F4F6] font-sans text-[#111827]">
@@ -764,7 +902,17 @@ const AdminPanel: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {filteredExams.map((exam: ExamPaper) => (
+                    {loadingSummaries ? (
+                        <div className="col-span-full py-12 text-center">
+                            <Loader2 size={32} className="animate-spin mx-auto mb-3 text-gray-400" />
+                            <div className="text-sm text-gray-500">Loading papers...</div>
+                        </div>
+                    ) : filteredExams.length === 0 ? (
+                        <div className="col-span-full py-12 text-center bg-white border border-dashed border-[#D1D5DB] rounded-xl text-[#9CA3AF]">
+                            No exams found in this category.
+                        </div>
+                    ) : (
+                        filteredExams.map((exam: any) => (
                         <div 
                             key={exam.id}
                             className="group bg-white rounded-xl border border-[#E5E7EB] p-6 hover:shadow-lg hover:border-[#D1D5DB] transition-all relative"
@@ -822,17 +970,9 @@ const AdminPanel: React.FC = () => {
                                     <Clock size={16} className="text-[#9CA3AF]"/>
                                     {exam.durationMinutes}m
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <ShieldCheck size={16} className="text-[#9CA3AF]"/>
-                                    {exam.sections.length} Sections
-                                </div>
                             </div>
                         </div>
-                    ))}
-                    {filteredExams.length === 0 && (
-                        <div className="col-span-full py-12 text-center bg-white border border-dashed border-[#D1D5DB] rounded-xl text-[#9CA3AF]">
-                            No exams found in this category.
-                        </div>
+                    ))
                     )}
                 </div>
             </div>
@@ -984,6 +1124,28 @@ const AdminPanel: React.FC = () => {
                     >
                         {showNavPanel ? <ChevronLeft size={18}/> : <ChevronRight size={18}/>}
                     </button>
+                    
+                    {/* Question Navigation Arrows - Below toggle button */}
+                    <div className="fixed left-4 top-52 z-40 flex flex-col gap-2">
+                        <button
+                            type="button"
+                            onClick={goToPreviousQuestion}
+                            disabled={totalQuestions === 0 || getCurrentQuestionNumber() <= 1}
+                            className="p-2 bg-white border border-[#E5E7EB] rounded-lg shadow-md hover:bg-[#F3F4F6] transition-colors text-[#1F2937] disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Previous Question"
+                        >
+                            <ChevronUp size={20} strokeWidth={3} />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={goToNextQuestion}
+                            disabled={totalQuestions === 0 || getCurrentQuestionNumber() >= totalQuestions}
+                            className="p-2 bg-white border border-[#E5E7EB] rounded-lg shadow-md hover:bg-[#F3F4F6] transition-colors text-[#1F2937] disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Next Question"
+                        >
+                            <ChevronDown size={20} strokeWidth={3} />
+                        </button>
+                    </div>
 
                     {/* Left Navigation Panel */}
                     {showNavPanel && (
@@ -1071,7 +1233,7 @@ const AdminPanel: React.FC = () => {
 
                             <div className="p-6 bg-white space-y-6">
                                 {section.questions.map((q, qIdx) => (
-                                    <div key={q.id} className="bg-[#F8F9FA] p-6 rounded-lg border border-[#E5E7EB] relative group hover:border-[#D1D5DB] transition-colors">
+                                    <div key={q.id} id={`question-${sIdx}-${qIdx}`} className="bg-[#F8F9FA] p-6 rounded-lg border border-[#E5E7EB] relative group hover:border-[#D1D5DB] transition-colors scroll-mt-24">
                                         
                                         {/* Question Header & Delete Button */}
                                         <div className="flex justify-between items-center mb-4">

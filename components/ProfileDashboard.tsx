@@ -6,14 +6,16 @@ import {
   Settings, Moon, Bell, Shield, 
   ChevronRight, X,
   BookOpen, Clock, ArrowDownUp, HelpCircle,
-  BarChart2, Flame, Target, Check
+    BarChart2, Flame, Target, Check, Loader2
 } from 'lucide-react';
-import { ExamPaper, UserAttempt } from '../types';
+import { UserAttempt } from '../types';
 import { supabase } from '../supabaseClient';
 import { fetchCompletedExams } from '../utils/examUtils';
 import { getUserStreak, formatStreakDisplay } from '../utils/streak';
 import SkeletonLoader from './SkeletonLoader';
 import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
+import { ExamSummary, getExamsSummary, examDetailKey, getExamDetail } from '../utils/examQueries';
 
 type SettingsTab = 'SETTINGS' | 'ANALYTICS' | 'PROFILE' | 'NOTIFICATIONS' | 'HELP';
 
@@ -31,8 +33,9 @@ const StatCard = ({ icon: Icon, label, value, sub, colorClass, bgClass }: any) =
 );
 
 const ProfileDashboard: React.FC = () => {
-  const { studentDetails, exams, subscription, startExamFlow, handleUpgrade, handleProfileUpdate } = useOutletContext<any>();
+    const { studentDetails, subscription, handleUpgrade, handleProfileUpdate } = useOutletContext<any>();
   const navigate = useNavigate();
+    const queryClient = useQueryClient();
 
   const [attempts, setAttempts] = useState<UserAttempt[]>([]);
   const [loadingAttempts, setLoadingAttempts] = useState(true);
@@ -186,18 +189,23 @@ const ProfileDashboard: React.FC = () => {
     return { totalTests, bestAccuracy, streak };
   }, [attempts]);
 
-  const availableCategories = ['ALL', ...Array.from(new Set((exams || []).map((e: ExamPaper) => e.examType || 'UCEED')))];
-  
+    const { data: examsSummary, isLoading: loadingExamsSummary, isFetching: fetchingExamsSummary, error: examsSummaryError } = useQuery({
+    queryKey: ['examsSummary'],
+    queryFn: getExamsSummary,
+  });
+
+  const availableCategories = ['ALL', ...Array.from(new Set((examsSummary || []).map((e: ExamSummary) => e.examType || 'UCEED')))];
+
   const filteredExams = useMemo(() => {
-      let filtered = exams || [];
+      let filtered = (examsSummary || []) as ExamSummary[];
       if (selectedCategory !== 'ALL') {
-          filtered = filtered.filter((e: ExamPaper) => e.examType === selectedCategory);
+          filtered = filtered.filter((e) => e.examType === selectedCategory);
       }
-      return filtered.sort((a: ExamPaper, b: ExamPaper) => {
+      return filtered.sort((a, b) => {
           if (sortOrder === 'NEWEST') return b.year - a.year;
           return a.year - b.year;
       });
-  }, [exams, selectedCategory, sortOrder]);
+  }, [examsSummary, selectedCategory, sortOrder]);
 
   const handleProfileSave = async () => {
       setSavingProfile(true);
@@ -331,19 +339,39 @@ const ProfileDashboard: React.FC = () => {
              </div>
          </div>
 
+         {/* Inline loading banner */}
+         {fetchingExamsSummary && (
+           <div className="mb-3 flex items-center gap-2 text-xs font-bold text-gray-600">
+             <Loader2 size={14} className="animate-spin" /> Loading papers...
+           </div>
+         )}
+
          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-             {filteredExams.length === 0 ? (
+             {loadingExamsSummary ? (
+                 <SkeletonLoader type="card" count={6} />
+             ) : examsSummaryError ? (
+                 <div className="col-span-full py-12 text-center bg-white border border-dashed border-red-200 rounded-xl text-red-600">
+                     Failed to load papers. Please retry.
+                 </div>
+             ) : filteredExams.length === 0 ? (
                  <div className="col-span-full py-12 text-center bg-white border border-dashed border-gray-200 rounded-xl text-gray-400">
                      No exams found in this category.
                  </div>
              ) : (
-                 filteredExams.map((exam: ExamPaper) => {
+                 filteredExams.map((exam: ExamSummary) => {
                      const isLocked = subscription === 'FREE' && exam.isPremium;
                      const isCompleted = completedExamIds.has(exam.id);
                      return (
                         <div 
                             key={exam.id}
-                            onClick={() => !isLocked && startExamFlow(exam.id)}
+                            onMouseEnter={() => queryClient.prefetchQuery({ queryKey: examDetailKey(exam.id), queryFn: () => getExamDetail(exam.id) })}
+                            onFocus={() => queryClient.prefetchQuery({ queryKey: examDetailKey(exam.id), queryFn: () => getExamDetail(exam.id) })}
+                            onClick={() => {
+                              if (isLocked) return;
+                              // Prioritize detail load for clicked exam
+                              queryClient.fetchQuery({ queryKey: examDetailKey(exam.id), queryFn: () => getExamDetail(exam.id) });
+                              navigate(`/instructions/${exam.id}`, { state: { examSummary: exam } });
+                            }}
                             className={`group bg-white rounded-xl border p-5 transition-all duration-200 relative overflow-hidden flex flex-col justify-between min-h-[160px]
                                 ${isLocked 
                                 ? 'border-gray-200 opacity-75' 
@@ -389,16 +417,16 @@ const ProfileDashboard: React.FC = () => {
                             </div>
 
                             <div className="flex items-center justify-between text-xs text-gray-500 border-t border-gray-50 pt-3">
-                                <div className="flex items-center gap-3">
-                                    <span className="flex items-center"><Clock size={12} className="mr-1"/> {exam.durationMinutes}m</span>
-                                    <span className="flex items-center"><Shield size={12} className="mr-1"/> {exam.sections.length} Sec</span>
-                                </div>
+                                                                <div className="flex items-center gap-3">
+                                                                        <span className="flex items-center"><Clock size={12} className="mr-1"/> {exam.durationMinutes}m</span>
+                                                                        {/* Sections count deferred to detail load; avoid blocking */}
+                                                                </div>
                                 <span className="font-bold text-gray-900 group-hover:translate-x-1 transition-transform flex items-center">
                                     Start <ChevronRight size={12} className="ml-1"/>
                                 </span>
                             </div>
 
-                            {latestSubmissions[exam.id] && (
+                                                        {latestSubmissions[exam.id] && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();

@@ -2,15 +2,22 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as ReactWindow from 'react-window';
 const FixedSizeList = (ReactWindow as any).FixedSizeList;
 import { User, Info, ChevronLeft, ChevronRight, AlertTriangle, Lock, Loader2, X } from 'lucide-react';
-import { useParams, useOutletContext, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { ExamPaper, QuestionStatus, QuestionType, UserResponse, UserQuestionStatus } from '../types';
 import { useBlockNavigation } from '../utils/useBlockNavigation';
+import { useQuery } from '@tanstack/react-query';
+import { getExamDetail, examDetailKey } from '../utils/examQueries';
 
 const StudentExamInterface: React.FC = () => {
-  const { examId } = useParams();
-  const navigate = useNavigate();
-  const { exams, handleExamSubmit } = useOutletContext<any>();
-  const exam = exams.find((e: ExamPaper) => e.id === examId);
+    const { examId } = useParams();
+    const navigate = useNavigate();
+    // Fetch exam detail; cache should be warm from instructions prefetch
+    const { data: exam, isLoading: loadingExam } = useQuery<ExamPaper>({
+        queryKey: examDetailKey(examId as string),
+        queryFn: () => getExamDetail(examId as string),
+        enabled: !!examId,
+    });
+    const { handleExamSubmit } = useOutletContext<any>();
 
   // --- State ---
   const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
@@ -27,7 +34,7 @@ const StudentExamInterface: React.FC = () => {
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
 
   // Safety Checks
-  const hasSections = exam?.sections && exam.sections.length > 0;
+    const hasSections = !!exam && exam.sections && exam.sections.length > 0;
   const currentSection = hasSections ? exam.sections[currentSectionIndex] : null;
   const hasQuestions = currentSection?.questions && currentSection.questions.length > 0;
   const currentQuestion = hasQuestions ? currentSection.questions[currentQuestionIndex] : null;
@@ -192,8 +199,8 @@ const StudentExamInterface: React.FC = () => {
     }, []);
   
   // Initialization
-  useEffect(() => {
-    if (!exam || !exam.sections) return;
+    useEffect(() => {
+        if (!exam || !exam.sections) return;
 
     // Initialize all questions as not visited
     const initialStatus: UserQuestionStatus = {};
@@ -209,7 +216,7 @@ const StudentExamInterface: React.FC = () => {
   }, [exam]);
 
   // Update status when visiting a question
-  useEffect(() => {
+    useEffect(() => {
     if (!currentQuestion) return;
 
     setStatus(prev => {
@@ -389,7 +396,14 @@ const StudentExamInterface: React.FC = () => {
   };
 
   // --- Submit Lock Logic ---
-  const totalDurationSeconds = (exam?.durationMinutes || 120) * 60;
+    const totalDurationSeconds = (exam?.durationMinutes || 120) * 60;
+    if (loadingExam || !exam) {
+        return (
+            <div className="flex items-center justify-center h-screen">
+                <div className="text-sm text-[#6B7280]">Loading exam…</div>
+            </div>
+        );
+    }
   const timeSpentSeconds = totalDurationSeconds - timeLeft;
   // 30 minutes in seconds = 1800
   const LOCK_DURATION = 1800; 

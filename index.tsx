@@ -2,6 +2,7 @@ import React, { Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Analytics } from '@vercel/analytics/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import HomePage from './components/HomePage';
 import PricingPage from './components/PricingPage';
@@ -25,29 +26,40 @@ if (!container) {
 }
 const root = createRoot(container);
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5,
+      gcTime: 1000 * 60 * 30,
+      retry: 1,
+    },
+  },
+});
+
 root.render(
   <React.StrictMode>
-    <BrowserRouter>
-      <Suspense fallback={<LoadingScreen message="Loading page" subtext="Fetching resources..." />}>
-        <Routes>
-          <Route element={<App />}>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/login" element={<LoginScreen />} />
-            <Route path="/dashboard" element={<ProfileDashboard />} />
-            <Route path="/admin" element={<AdminPanel />} />
-            <Route path="/instructions/:examId" element={<InstructionScreen />} />
-            <Route path="/exam/:examId" element={<StudentExamInterface />} />
-            <Route path="/result" element={<ResultScreen />} />
-            <Route path="/exam-results/:submissionId" element={<ExamResults />} />
-            <Route path="/exam-review/:submissionId" element={<ExamReview />} />
-            <Route path="/auth/callback" element={<AuthRedirectHandler />} />
-            <Route path="/update-password" element={<UpdatePassword />} />
-            <Route path="*" element={<h1>404 Not Found</h1>} />
-          </Route>
-        </Routes>
-      </Suspense>
-      <Analytics />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Suspense fallback={<LoadingScreen message="Loading page" subtext="Fetching resources..." />}>
+          <Routes>
+            <Route element={<App />}>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/pricing" element={<PricingPage />} />
+              <Route path="/login" element={<LoginScreen />} />
+              <Route path="/dashboard" element={<ProfileDashboard />} />
+              <Route path="/admin" element={<AdminPanel />} />            <Route path="/admin/edit/:examId" element={<AdminPanel />} />              <Route path="/instructions/:examId" element={<InstructionScreen />} />
+              <Route path="/exam/:examId" element={<StudentExamInterface />} />
+              <Route path="/result" element={<ResultScreen />} />
+              <Route path="/exam-results/:submissionId" element={<ExamResults />} />
+              <Route path="/exam-review/:submissionId" element={<ExamReview />} />
+              <Route path="/auth/callback" element={<AuthRedirectHandler />} />
+              <Route path="/update-password" element={<UpdatePassword />} />
+              <Route path="*" element={<h1>404 Not Found</h1>} />
+            </Route>
+          </Routes>
+        </Suspense>
+        <Analytics />
+      </BrowserRouter>
+    </QueryClientProvider>
   </React.StrictMode>
 );
