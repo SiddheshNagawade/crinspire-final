@@ -79,18 +79,11 @@ const App: React.FC = () => {
 
     useEffect(() => {
             checkUserSession();
-            // Avoid heavy full exam load on initial mount unless on admin route
-            if (location.pathname.startsWith('/admin')) {
-                fetchExams();
-            }
+            // AdminPanel now uses React Query for on-demand exam loading
     }, []);
 
-    useEffect(() => {
-            // When navigating into admin, load exams lazily
-            if (location.pathname.startsWith('/admin')) {
-                fetchExams();
-            }
-    }, [location.pathname]);
+    // AdminPanel uses React Query and loads data on-demand
+    // No need for App-level fetchExams anymore
 
   useEffect(() => {
       const stored = localStorage.getItem('last_submission_id');
@@ -653,6 +646,7 @@ const App: React.FC = () => {
         if (!options?.silent) {
             alert(`✅ Exam saved! (${toInsert.length} question${toInsert.length !== 1 ? 's' : ''} updated)`);
         }
+        return paperId;
     } catch (error: any) {
         console.error('Save error details:', error);
         

@@ -110,23 +110,42 @@ export const authenticateInstructor = async (
  */
 export const checkCurrentUserAdminStatus = async (): Promise<boolean> => {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('Session error:', sessionError);
+      return false;
+    }
 
     const user = session?.user;
-    if (!user) return false;
-
-    // prefer checking by user id
-    if (user.id) {
-      const byId = await isUserIdAdminWhitelisted(user.id);
-      if (byId) return true;
+    if (!user) {
+      console.log('No user session found');
+      return false;
     }
 
-    // fallback to email-based check
-    if (user.email) {
-      return await isEmailAdminWhitelisted(user.email);
-    }
+    // Try database check with timeout
+    const timeoutPromise = new Promise<boolean>((resolve) => {
+      setTimeout(() => {
+        resolve(false);
+      }, 3000); // 3 second timeout
+    });
 
-    return false;
+    const checkPromise = (async () => {
+      // prefer checking by user id
+      if (user.id) {
+        const byId = await isUserIdAdminWhitelisted(user.id);
+        if (byId) return true;
+      }
+
+      // fallback to email-based check
+      if (user.email) {
+        return await isEmailAdminWhitelisted(user.email);
+      }
+
+      return false;
+    })();
+
+    return await Promise.race([checkPromise, timeoutPromise]);
   } catch (error) {
     console.error('Error checking admin status:', error);
     return false;

@@ -4,12 +4,14 @@ import { Question, QuestionOption, QuestionType, Section, ExamPaper } from '../t
 import { getMSQPreview } from '../utils/msq';
 import LoadingScreen from './LoadingScreen';
 import { useOutletContext, useNavigate, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getExamsSummary, getExamDetail, examDetailKey } from '../utils/examQueries';
+import { importOptionsFromJSON } from '../utils/importOptionsFromJSON';
 
 const AdminPanel: React.FC = () => {
   const navigate = useNavigate();
   const { examId } = useParams();
+  const queryClient = useQueryClient();
   const { handleAdminSave: onSave, handleDeleteExam: onDelete } = useOutletContext<any>();
   
   // Load summaries for list view
@@ -31,10 +33,10 @@ const AdminPanel: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showNavPanel, setShowNavPanel] = useState(true);
-    const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
-    const [isAutoSaving, setIsAutoSaving] = useState(false);
-    const [lastAutoSaveAt, setLastAutoSaveAt] = useState<Date | null>(null);
     const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>('');
+    const [importingOptions, setImportingOptions] = useState(false);
+    const [importProgress, setImportProgress] = useState({ current: 0, total: 0, message: '' });
+    const optionsImportInputRef = useRef<HTMLInputElement | null>(null);
         const [showAiJsonFormat, setShowAiJsonFormat] = useState(false);
         const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
         
@@ -94,7 +96,6 @@ const AdminPanel: React.FC = () => {
           isPremium: false,
           sections: initialSections
       }));
-      setLastAutoSaveAt(null);
 
       setViewMode('EDITOR');
   };
@@ -119,7 +120,6 @@ const AdminPanel: React.FC = () => {
           isPremium: !!examDetail.isPremium,
           sections: copiedSections
       }));
-      setLastAutoSaveAt(null);
       setViewMode('EDITOR');
     } else if (!examId) {
       setViewMode('LIST');
@@ -606,12 +606,14 @@ const AdminPanel: React.FC = () => {
           isPremium,
           sections
         };
-        await onSave(newExam);
-                // Update autosave snapshot to reflect latest saved state
+                const savedId = await onSave(newExam);
+                if (savedId) {
+                    setEditingId(savedId);
+                }
                 const snapshot = JSON.stringify({ title, year, examType, duration, isPremium, sections });
                 setLastSavedSnapshot(snapshot);
-                setLastAutoSaveAt(new Date());
-        setViewMode('LIST');
+                setViewMode('LIST');
+                navigate('/admin');
     } catch (e) {
         console.error(e);
         // Error alert handled in parent
@@ -631,33 +633,6 @@ const AdminPanel: React.FC = () => {
         sections
     });
 
-    // Silent auto-save when content changed
-    const handleAutoSave = async () => {
-        if (isAutoSaving) return;
-        const snapshot = JSON.stringify({ title, year, examType, duration, isPremium, sections });
-        if (snapshot === lastSavedSnapshot) return;
-        try {
-            setIsAutoSaving(true);
-            const draft = buildDraftExam();
-            if (!draft.id || draft.id === 'new') draft.id = crypto.randomUUID();
-            await onSave(draft, { silent: true });
-            setLastSavedSnapshot(snapshot);
-            setLastAutoSaveAt(new Date());
-        } catch (e) {
-            console.error('Auto-save failed', e);
-        } finally {
-            setIsAutoSaving(false);
-        }
-    };
-
-    // Interval: auto-save every 60s when enabled and in editor view
-    useEffect(() => {
-        if (!autoSaveEnabled || viewMode !== 'EDITOR') return;
-        const interval = setInterval(() => {
-            handleAutoSave();
-        }, 60000);
-        return () => clearInterval(interval);
-    }, [autoSaveEnabled, viewMode, title, year, examType, duration, isPremium, sections]);
 
     const aiJsonFormatTemplate = useMemo(() => {
         const template = {
@@ -667,23 +642,63 @@ const AdminPanel: React.FC = () => {
             durationMinutes: 120,
             isPremium: false,
             sections: [
+                // Section A - NAT (options skipped)
                 {
-                    name: "Part A",
+                    sectionName: "NAT",
+                    sectionCode: "A",
+                    marksPerQuestion: 4,
+                    negativeMarks: 0,
                     questions: [
                         {
-                            text: "<Question text>",
-                            imageUrl: "",
-                            type: "MCQ",
-                            marks: 4,
-                            negativeMarks: 1,
-                            category: "",
+                            questionNumber: 1,
+                            text: "<NAT question text>",
+                            type: "NAT",
+                            // Accepts single value, range ("min-max"), or OR values ("x or y")
+                            correctAnswer: "65-66"
+                        }
+                    ]
+                },
+                // Section B - MSQ (multiple correct)
+                {
+                    sectionName: "MSQ",
+                    sectionCode: "B",
+                    marksPerQuestion: 5,
+                    negativeMarks: -0.5,
+                    questions: [
+                        {
+                            questionNumber: 21,
+                            text: "<MSQ question text>",
+                            type: "MSQ",
                             optionDetails: [
                                 { type: "text", text: "Option A", isCorrect: true },
                                 { type: "text", text: "Option B", isCorrect: false },
-                                { type: "text", text: "Option C", isCorrect: false },
+                                { type: "text", text: "Option C", isCorrect: true },
                                 { type: "text", text: "Option D", isCorrect: false }
                             ],
-                            correctAnswer: "A"
+                            // Prefer letters; importer also respects isCorrect flags
+                            correctAnswers: ["A", "C"]
+                        }
+                    ]
+                },
+                // Section C - MCQ (single correct)
+                {
+                    sectionName: "MCQ",
+                    sectionCode: "C",
+                    marksPerQuestion: 3,
+                    negativeMarks: -1,
+                    questions: [
+                        {
+                            questionNumber: 41,
+                            text: "<MCQ question text>",
+                            type: "MCQ",
+                            optionDetails: [
+                                { type: "text", text: "Option A" },
+                                { type: "text", text: "Option B" },
+                                { type: "text", text: "Option C" },
+                                { type: "text", text: "Option D" }
+                            ],
+                            // Single letter A-D
+                            correctAnswer: "B"
                         }
                     ]
                 }
@@ -721,21 +736,30 @@ const AdminPanel: React.FC = () => {
             return QuestionType.NAT;
         };
 
-        const normalizeOptionDetails = (qId: string, raw: any, qType: QuestionType): QuestionOption[] => {
-            let optionDetails: any[] = [];
-            if (Array.isArray(raw?.optionDetails)) optionDetails = raw.optionDetails;
-            else if (Array.isArray(raw?.option_details)) optionDetails = raw.option_details;
-            else if (Array.isArray(raw?.options)) optionDetails = raw.options.map((text: any) => ({ type: 'text', text, isCorrect: false }));
+        const normalizeOptionDetails = (qId: string, raw: any, qType: QuestionType, rawCorrect: any): QuestionOption[] => {
+            let source: any[] = [];
+            if (Array.isArray(raw?.optionDetails)) source = raw.optionDetails;
+            else if (Array.isArray(raw?.option_details)) source = raw.option_details;
+            else if (Array.isArray(raw?.options)) source = raw.options;
 
-            const normalized = optionDetails.map((opt, idx) => ({
-                id: typeof opt?.id === 'string' ? opt.id : `${qId}-opt-${idx}`,
-                type: opt?.type === 'image' ? 'image' : 'text',
-                text: typeof opt?.text === 'string' ? opt.text : (typeof opt === 'string' ? opt : ''),
-                imageData: typeof opt?.imageData === 'string' ? opt.imageData : undefined,
-                altText: typeof opt?.altText === 'string' ? opt.altText : undefined,
-                isCorrect: !!opt?.isCorrect,
-            } as QuestionOption));
+            const normalized = (source || []).map((opt, idx) => {
+                const text = typeof opt?.text === 'string'
+                    ? opt.text
+                    : (typeof opt?.option_text === 'string' ? opt.option_text : (typeof opt === 'string' ? opt : ''));
+                const isCorrect = typeof opt?.isCorrect === 'boolean'
+                    ? opt.isCorrect
+                    : (typeof opt?.is_correct === 'boolean' ? opt.is_correct : false);
+                return {
+                    id: typeof opt?.id === 'string' ? opt.id : `${qId}-opt-${idx}`,
+                    type: opt?.type === 'image' ? 'image' : 'text',
+                    text,
+                    imageData: typeof opt?.imageData === 'string' ? opt.imageData : undefined,
+                    altText: typeof opt?.altText === 'string' ? opt.altText : undefined,
+                    isCorrect,
+                } as QuestionOption;
+            });
 
+            // If MCQ/MSQ ensure 4 slots exist
             if (qType === QuestionType.MCQ || qType === QuestionType.MSQ) {
                 while (normalized.length < 4) {
                     const idx = normalized.length;
@@ -743,10 +767,29 @@ const AdminPanel: React.FC = () => {
                 }
             }
 
+            // If raw provides answer letters, set isCorrect accordingly
+            const applyLetters = (letters: string[] | string | undefined) => {
+                if (!letters) return;
+                const arr = Array.isArray(letters) ? letters : [letters];
+                const upper = arr.map((l) => String(l).trim().toUpperCase());
+                upper.forEach((L) => {
+                    const idx = L.charCodeAt(0) - 65; // 'A' -> 0
+                    if (idx >= 0 && idx < normalized.length) normalized[idx].isCorrect = true;
+                });
+            };
+
+            if (qType === QuestionType.MSQ) applyLetters(raw?.correctAnswers || rawCorrect);
+            if (qType === QuestionType.MCQ) applyLetters(raw?.correctAnswer || rawCorrect);
+
             return normalized;
         };
 
-        const deriveCorrectAnswer = (qType: QuestionType, optionDetails: QuestionOption[], rawCorrect: any) => {
+        const deriveCorrectAnswer = (qType: QuestionType, optionDetails: QuestionOption[], rawCorrect: any, raw: any) => {
+            // Prefer explicit answers in input
+            if (qType === QuestionType.MSQ && Array.isArray(raw?.correctAnswers)) return raw.correctAnswers;
+            if ((qType === QuestionType.MCQ || qType === QuestionType.NAT) && (raw?.correctAnswer ?? rawCorrect) !== undefined && (raw?.correctAnswer ?? rawCorrect) !== '') {
+                return raw?.correctAnswer ?? rawCorrect;
+            }
             if (rawCorrect !== undefined && rawCorrect !== null && rawCorrect !== '') return rawCorrect;
             if (qType === QuestionType.MSQ) {
                 return optionDetails
@@ -762,25 +805,45 @@ const AdminPanel: React.FC = () => {
 
         const normalizedSections: Section[] = asExamObject.sections.map((sec: any, secIdx: number) => {
             const secId = typeof sec?.id === 'string' ? sec.id : crypto.randomUUID();
-            const secName = typeof sec?.name === 'string' ? sec.name : (typeof sec?.section_name === 'string' ? sec.section_name : `Section ${secIdx + 1}`);
+            const secName = ((): string => {
+                if (typeof sec?.name === 'string') return sec.name;
+                if (typeof sec?.section_name === 'string') return sec.section_name;
+                if (typeof sec?.sectionName === 'string') return sec.sectionName;
+                if (typeof sec?.sectionCode === 'string') {
+                    const code = String(sec.sectionCode).trim().toUpperCase();
+                    if (code === 'A') return 'NAT';
+                    if (code === 'B') return 'MSQ';
+                    if (code === 'C') return 'MCQ';
+                }
+                return `Section ${secIdx + 1}`;
+            })();
             const rawQuestions = Array.isArray(sec?.questions) ? sec.questions : [];
+            const sectionMarks = typeof sec?.marksPerQuestion === 'number' ? sec.marksPerQuestion : undefined;
+            const sectionNegative = typeof sec?.negativeMarks === 'number' ? sec.negativeMarks : undefined;
 
             const questions: Question[] = rawQuestions.map((rq: any, qIdx: number) => {
                 const qId = typeof rq?.id === 'string' ? rq.id : crypto.randomUUID();
-                const qType = normalizeType(rq?.type);
-                const optionDetails = normalizeOptionDetails(qId, rq, qType);
-                const correctAnswer = deriveCorrectAnswer(qType, optionDetails, rq?.correctAnswer ?? rq?.correct_answer);
+                // Derive type: prefer explicit, else from section name
+                let qType = normalizeType(rq?.type);
+                if (!rq?.type && typeof secName === 'string') {
+                    const upper = secName.toUpperCase();
+                    if (upper.includes('NAT')) qType = QuestionType.NAT;
+                    else if (upper.includes('MSQ')) qType = QuestionType.MSQ;
+                    else if (upper.includes('MCQ')) qType = QuestionType.MCQ;
+                }
+                const optionDetails = normalizeOptionDetails(qId, rq, qType, rq?.correctAnswers ?? rq?.correctAnswer ?? rq?.correct_answer);
+                const correctAnswer = deriveCorrectAnswer(qType, optionDetails, rq?.correctAnswer ?? rq?.correct_answer, rq);
 
                 return {
                     id: qId,
                     text: typeof rq?.text === 'string' ? rq.text : '',
                     imageUrl: typeof rq?.imageUrl === 'string' ? rq.imageUrl : (typeof rq?.image_url === 'string' ? rq.image_url : undefined),
                     type: qType,
-                    options: optionDetails.map((o) => o.text || ''),
+                    options: optionDetails.map((o) => o.text || ''), 
                     optionDetails,
                     correctAnswer,
-                    marks: typeof rq?.marks === 'number' ? rq.marks : 4,
-                    negativeMarks: typeof rq?.negativeMarks === 'number' ? rq.negativeMarks : (typeof rq?.negative_marks === 'number' ? rq.negative_marks : 0),
+                    marks: typeof rq?.marks === 'number' ? rq.marks : (sectionMarks ?? 4),
+                    negativeMarks: typeof rq?.negativeMarks === 'number' ? rq.negativeMarks : (typeof rq?.negative_marks === 'number' ? rq.negative_marks : (sectionNegative ?? 0)),
                     category: typeof rq?.category === 'string' ? rq.category : '',
                 };
             });
@@ -805,14 +868,38 @@ const AdminPanel: React.FC = () => {
 
     const onJsonFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        // Allow importing the same file again
         e.target.value = '';
         if (!file) return;
-
         try {
             await handleJsonImportFile(file);
         } catch {
             alert('Invalid JSON file. Please check the format.');
+        }
+    };
+
+    const onOptionsImportChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        setImportingOptions(true);
+        setImportProgress({ current: 0, total: 0, message: 'Starting...' });
+        try {
+            const result = await importOptionsFromJSON(file, (current, total, message) => {
+                setImportProgress({ current, total, message });
+            });
+            if (result.success) {
+                alert(`✅ Success! Imported ${result.successCount} options (images + text preserved).`);
+                queryClient.invalidateQueries(examDetailKey(editingId as string));
+                queryClient.invalidateQueries(['examsSummary']);
+            } else {
+                const errorMsg = result.errors.length > 0 ? result.errors.slice(0, 3).join('\n') : 'Unknown error';
+                alert(`❌ Import: ${result.successCount}/${result.totalProcessed} OK\n\n${errorMsg}`);
+            }
+        } catch (err: any) {
+            alert('Error: ' + err.message);
+        } finally {
+            setImportingOptions(false);
+            setImportProgress({ current: 0, total: 0, message: '' });
         }
     };
 
@@ -952,6 +1039,7 @@ const AdminPanel: React.FC = () => {
                                             if (window.confirm(`Delete "${exam.title}" permanently? This cannot be undone.`)) {
                                                 setDeletingId(exam.id);
                                                 await onDelete(exam.id);
+                                                queryClient.invalidateQueries(['examsSummary']);
                                                 setDeletingId(null);
                                             }
                                         }}
@@ -1014,6 +1102,23 @@ const AdminPanel: React.FC = () => {
                          >
                              <FileJson size={14} className="mr-1"/>
                              {showAiJsonFormat ? 'Hide Format' : 'AI Format'}
+                         </button>
+                         <input
+                            ref={optionsImportInputRef}
+                            type="file"
+                            accept="application/json"
+                            onChange={onOptionsImportChange}
+                            className="hidden"
+                         />
+                         <button
+                            type="button"
+                            disabled={importingOptions}
+                            onClick={() => optionsImportInputRef.current?.click()}
+                            className="text-xs font-bold bg-green-50 border border-green-200 hover:bg-green-100 text-green-700 px-3 py-2 rounded flex items-center transition-colors disabled:opacity-50"
+                            title="Bulk import options (preserves images and question text)"
+                         >
+                             {importingOptions ? <Loader2 size={14} className="mr-1 animate-spin" /> : <FileJson size={14} className="mr-1" />}
+                             {importingOptions ? `Importing... ${importProgress.current}/${importProgress.total}` : 'Import Options'}
                          </button>
                     </div>
                 </div>
@@ -1151,28 +1256,6 @@ const AdminPanel: React.FC = () => {
                     {showNavPanel && (
                         <div className="w-64 flex-shrink-0 sticky top-24 self-start">
                             <div className="bg-white border border-[#E5E7EB] rounded-lg p-4 shadow-sm">
-                                {/* Auto-save Toggle */}
-                                <div className="mb-4">
-                                    <label className="flex items-center cursor-pointer group">
-                                        <div className="relative">
-                                            <input
-                                                type="checkbox"
-                                                checked={autoSaveEnabled}
-                                                onChange={(e) => setAutoSaveEnabled(e.target.checked)}
-                                                className="sr-only"
-                                            />
-                                            <div className={`block w-12 h-7 rounded-full transition-colors ${autoSaveEnabled ? 'bg-[#1F2937]' : 'bg-gray-200'}`}></div>
-                                            <div className={`absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform transform ${autoSaveEnabled ? 'translate-x-5' : ''}`}></div>
-                                        </div>
-                                        <div className="ml-3">
-                                            <div className="text-xs font-bold text-[#1F2937]">Auto-save {autoSaveEnabled ? 'ON' : 'OFF'}</div>
-                                            <div className="text-[11px] text-[#6B7280]">
-                                                {isAutoSaving ? 'Saving…' : (lastAutoSaveAt ? `Last: ${lastAutoSaveAt.toLocaleTimeString()}` : 'Not saved yet')}
-                                            </div>
-                                        </div>
-                                    </label>
-                                </div>
-
                                 <h3 className="text-sm font-bold text-[#1F2937] mb-3 flex items-center">
                                     <LayoutList size={16} className="mr-2"/>
                                     Sections
