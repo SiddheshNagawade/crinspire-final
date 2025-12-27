@@ -354,6 +354,37 @@ const AdminPanel: React.FC = () => {
     setSections(newSections);
   };
 
+  const insertQuestionAfter = (sectionIndex: number, afterQuestionIndex: number) => {
+    const newSections = [...sections];
+    const sectionToUpdate = { ...newSections[sectionIndex] };
+    const tempId = crypto.randomUUID();
+    
+    const newQuestion: Question = {
+      id: tempId,
+      text: '',
+      type: QuestionType.NAT,
+      marks: 4,
+      negativeMarks: 0,
+      options: [],
+      optionDetails: [0,1,2,3].map((i) => ({
+        id: `${tempId}-opt-${i}`,
+        type: 'text',
+        text: '',
+        isCorrect: false,
+      } as QuestionOption)),
+      correctAnswer: '',
+      category: ''
+    };
+    
+    // Insert the new question after the specified index
+    const questions = [...sectionToUpdate.questions];
+    questions.splice(afterQuestionIndex + 1, 0, newQuestion);
+    sectionToUpdate.questions = questions;
+    
+    newSections[sectionIndex] = sectionToUpdate;
+    setSections(newSections);
+  };
+
   const deleteQuestion = (sectionIndex: number, questionIndex: number) => {
     if(!window.confirm("Delete this question?")) return;
     const newSections = [...sections];
@@ -1316,7 +1347,8 @@ const AdminPanel: React.FC = () => {
 
                             <div className="p-6 bg-white space-y-6">
                                 {section.questions.map((q, qIdx) => (
-                                    <div key={q.id} id={`question-${sIdx}-${qIdx}`} className="bg-[#F8F9FA] p-6 rounded-lg border border-[#E5E7EB] relative group hover:border-[#D1D5DB] transition-colors scroll-mt-24">
+                                    <React.Fragment key={q.id}>
+                                    <div id={`question-${sIdx}-${qIdx}`} className="bg-[#F8F9FA] p-6 rounded-lg border border-[#E5E7EB] relative group hover:border-[#D1D5DB] transition-colors scroll-mt-24">
                                         
                                         {/* Question Header & Delete Button */}
                                         <div className="flex justify-between items-center mb-4">
@@ -1681,6 +1713,20 @@ const AdminPanel: React.FC = () => {
                                         </div>
 
                                     </div>
+                                    
+                                    {/* Insert Question Button */}
+                                    <div className="flex justify-center -mt-3 mb-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => insertQuestionAfter(sIdx, qIdx)}
+                                            className="group/insert flex items-center gap-2 px-4 py-2 bg-white border-2 border-dashed border-[#D1D5DB] text-[#6B7280] rounded-lg hover:border-[#1F2937] hover:text-[#1F2937] hover:bg-[#F8F9FA] transition-all shadow-sm"
+                                            title="Insert question below"
+                                        >
+                                            <Plus size={16} className="group-hover/insert:scale-110 transition-transform" />
+                                            <span className="text-sm font-medium">Insert Question</span>
+                                        </button>
+                                    </div>
+                                    </React.Fragment>
                                 ))}
                                 <button 
                                     type="button"

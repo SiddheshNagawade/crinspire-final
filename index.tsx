@@ -9,6 +9,7 @@ import PricingPage from './components/PricingPage';
 import AuthRedirectHandler from './components/AuthRedirectHandler';
 import UpdatePassword from './components/UpdatePassword';
 import LoadingScreen from './components/LoadingScreen';
+import LandingRedirect from './components/LandingRedirect';
 
 // Lazy-loaded heavy routes
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
@@ -43,7 +44,14 @@ root.render(
         <Suspense fallback={<LoadingScreen message="Loading page" subtext="Fetching resources..." />}>
           <Routes>
             <Route element={<App />}>
-              <Route path="/" element={<HomePage />} />
+              <Route
+                path="/"
+                element={(
+                  <LandingRedirect>
+                    <HomePage />
+                  </LandingRedirect>
+                )}
+              />
               <Route path="/pricing" element={<PricingPage />} />
               <Route path="/login" element={<LoginScreen />} />
               <Route path="/dashboard" element={<ProfileDashboard />} />
