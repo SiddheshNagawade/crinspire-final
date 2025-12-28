@@ -354,7 +354,7 @@ const HomePage: React.FC = () => {
                 <div className="relative rounded-xl overflow-hidden border-4 border-[#374151] shadow-2xl aspect-video bg-gray-900 mx-auto">
                      <iframe 
                         className="w-full h-full"
-                        src="https://www.youtube.com/embed/8U7pDXneas4?autoplay=0&controls=1&rel=0" 
+                        src="https://www.youtube.com/embed/U7pDXneas4?autoplay=0&controls=1&rel=0" 
                         title="Crinspire Video Walkthrough"
                         frameBorder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
