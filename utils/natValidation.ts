@@ -4,61 +4,72 @@
  */
 
 /**
- * Parse a NAT answer string to check if it's a range, single value, or OR-separated values
- * @param answerStr - The answer string (e.g., "42", "109.9-112.4", or "10 OR 20")
- * @returns Object with { isRange: boolean, min: number, max: number, value?: number, orValues?: number[] }
+ * Parse a NAT answer string to support combined OR and range logic
+ * @param answerStr - The answer string (e.g., "42", "1.12-1.14", "10 OR 20", or "65 or 1.12-1.14")
+ * @returns Object with { ranges: Array<{min, max}>, values: number[] }
  */
-export const parseNATAnswer = (answerStr: string): { isRange: boolean; min: number; max: number; value?: number; orValues?: number[] } | null => {
+export const parseNATAnswer = (answerStr: string): { ranges: Array<{min: number, max: number}>; values: number[] } | null => {
   if (!answerStr || typeof answerStr !== 'string') return null;
   
   const trimmed = answerStr.trim();
+  const ranges: Array<{min: number, max: number}> = [];
+  const values: number[] = [];
   
-  // Check for OR-separated values (e.g., "10 OR 20" or "10 or 20")
+  // Split by OR to handle combined logic like "65 or 1.12-1.14"
   if (/\bor\b/i.test(trimmed)) {
     const orParts = trimmed.split(/\s+or\s+/i).map(p => p.trim());
-    const values = orParts.map(p => parseFloat(p)).filter(v => !isNaN(v));
     
-    if (values.length >= 2) {
-      return { 
-        isRange: false, 
-        min: Math.min(...values), 
-        max: Math.max(...values), 
-        orValues: values 
-      };
-    }
-  }
-  
-  // Check if it's a range (contains "-" with two numbers)
-  if (trimmed.includes('-')) {
-    // Split and filter out empty strings
+    orParts.forEach(part => {
+      // Check if this part is a range (e.g., "1.12-1.14")
+      if (part.includes('-')) {
+        const rangeParts = part.split('-').filter(p => p.trim().length > 0);
+        if (rangeParts.length === 2) {
+          const min = parseFloat(rangeParts[0].trim());
+          const max = parseFloat(rangeParts[1].trim());
+          if (!isNaN(min) && !isNaN(max) && min <= max) {
+            ranges.push({ min, max });
+          }
+        }
+      } else {
+        // Single value
+        const val = parseFloat(part);
+        if (!isNaN(val)) {
+          values.push(val);
+        }
+      }
+    });
+  } else if (trimmed.includes('-')) {
+    // Single range (e.g., "1.12-1.14")
     const parts = trimmed.split('-').filter(p => p.trim().length > 0);
-    
-    // Handle case like "109.9-112.4"
     if (parts.length === 2) {
       const min = parseFloat(parts[0].trim());
       const max = parseFloat(parts[1].trim());
-      
       if (!isNaN(min) && !isNaN(max) && min <= max) {
-        return { isRange: true, min, max };
+        ranges.push({ min, max });
       }
+    }
+  } else {
+    // Single value
+    const singleValue = parseFloat(trimmed);
+    if (!isNaN(singleValue)) {
+      values.push(singleValue);
     }
   }
   
-  // Try to parse as single value
-  const singleValue = parseFloat(trimmed);
-  if (!isNaN(singleValue)) {
-    return { isRange: false, min: singleValue, max: singleValue, value: singleValue };
+  // If we have no ranges or values, return null
+  if (ranges.length === 0 && values.length === 0) {
+    return null;
   }
   
-  return null;
+  return { ranges, values };
 };
 
 /**
  * Check if a student's answer is correct for a NAT question
- * Handles single values, ranges, and OR-separated acceptable answers
+ * Handles single values, ranges, and combined OR logic with ranges
  * @param studentAnswer - The student's answer string
- * @param correctAnswer - The correct answer string (can be single value, range, or "10 OR 20")
- * @returns boolean - true if answer is correct (within range, exact match, or matches any OR value)
+ * @param correctAnswer - The correct answer string (e.g., "65", "1.12-1.14", "10 OR 20", or "65 or 1.12-1.14")
+ * @returns boolean - true if answer matches any value or falls within any range
  */
 export const isNATAnswerCorrect = (studentAnswer: string | undefined, correctAnswer: string | undefined): boolean => {
   if (!studentAnswer || !correctAnswer) return false;
@@ -68,20 +79,27 @@ export const isNATAnswerCorrect = (studentAnswer: string | undefined, correctAns
   
   if (!studentParsed || !correctParsed) return false;
   
-  const studentValue = studentParsed.value ?? (studentParsed.min + studentParsed.max) / 2;
+  const studentValue = studentParsed.values[0] ?? (studentParsed.ranges[0]?.min + studentParsed.ranges[0]?.max) / 2;
   
-  // If correct answer has OR values, check if student answer matches any of them
-  if (correctParsed.orValues && correctParsed.orValues.length > 0) {
-    return correctParsed.orValues.some(correctVal => Math.abs(studentValue - correctVal) < 0.01);
+  // Check if student answer matches any specific value
+  for (const acceptedValue of correctParsed.values) {
+    if (Math.abs(studentValue - acceptedValue) < 0.01) {
+      return true;
+    }
   }
   
-  // Check if student answer falls within the correct range
-  return studentValue >= correctParsed.min && studentValue <= correctParsed.max;
+  // Check if student answer falls within any acceptable range
+  for (const range of correctParsed.ranges) {
+    if (studentValue >= range.min && studentValue <= range.max) {
+      return true;
+    }
+  }
+  
+  return false;
 };
 
 /**
  * Format a NAT answer for display
- * If it's a range, return "min - max", if OR values return "val1 OR val2", otherwise return the value
  * @param answerStr - The answer string
  * @returns formatted string for display
  */
@@ -91,15 +109,19 @@ export const formatNATAnswer = (answerStr: string | undefined): string => {
   const parsed = parseNATAnswer(answerStr);
   if (!parsed) return answerStr;
   
-  if (parsed.orValues && parsed.orValues.length > 0) {
-    return parsed.orValues.join(' OR ');
-  }
+  const parts: string[] = [];
   
-  if (parsed.isRange) {
-    return `${parsed.min} - ${parsed.max}`;
-  }
+  // Add ranges
+  parsed.ranges.forEach(range => {
+    parts.push(`${range.min}-${range.max}`);
+  });
   
-  return String(parsed.value ?? parsed.min);
+  // Add individual values
+  parsed.values.forEach(val => {
+    parts.push(String(val));
+  });
+  
+  return parts.join(' or ');
 };
 
 /**
@@ -113,13 +135,19 @@ export const getNATAnswerRangeDisplay = (answerStr: string | undefined): string 
   const parsed = parseNATAnswer(answerStr);
   if (!parsed) return answerStr;
   
-  if (parsed.orValues && parsed.orValues.length > 0) {
-    return `(Accepted: ${parsed.orValues.join(' OR ')})`;
-  }
+  const parts: string[] = [];
   
-  if (parsed.isRange) {
-    return `(Accepted range: ${parsed.min} to ${parsed.max})`;
-  }
+  // Add ranges
+  parsed.ranges.forEach(range => {
+    parts.push(`${range.min} to ${range.max}`);
+  });
   
-  return `(Exact: ${parsed.value ?? parsed.min})`;
+  // Add individual values
+  parsed.values.forEach(val => {
+    parts.push(String(val));
+  });
+  
+  if (parts.length === 0) return '';
+  
+  return `(Accepted: ${parts.join(' or ')})`;
 };

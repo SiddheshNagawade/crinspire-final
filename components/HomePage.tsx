@@ -577,12 +577,12 @@ const HomePage: React.FC = () => {
         </div>
         
         <div className="max-w-7xl mx-auto mt-16 pt-8 border-t border-[#E5E7EB] flex flex-col md:flex-row justify-between items-center text-xs text-[#9CA3AF]">
-          <div>© 2025 Crinspire. All rights reserved.</div>
-          <div className="mt-2 md:mt-0 flex gap-6">
-            <span>Made for Designers</span>
-            <span>•</span>
-            <span>Contact: <a href="mailto:crinspire.help@gmail.com" className="hover:text-[#1F2937]">crinspire.help@gmail.com</a></span>
-          </div>
+            <div>© 2024 Crinspire. All rights reserved.</div>
+            <div className="mt-2 md:mt-0 flex gap-6">
+                <span>Made for Designers</span>
+                <span>•</span>
+                <span>Bangalore, India</span>
+            </div>
         </div>
       </footer>
     </div>

@@ -40,37 +40,98 @@ const ExamReview: React.FC = () => {
     const load = async () => {
       if (!submissionId) return;
       try {
+        // Check if user is authenticated first
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          console.error('Session error:', sessionError);
+          setError('Authentication failed. Please log in again.');
+          setLoading(false);
+          return;
+        }
+        if (!session?.user) {
+          setError('Please log in to view your exam review.');
+          setLoading(false);
+          return;
+        }
+
         let submission: any = null;
+        
+        // First, try to load from sessionStorage (fastest path)
         const cached = sessionStorage.getItem(`exam_review_${submissionId}`);
         if (cached) {
-          submission = JSON.parse(cached);
-        } else {
+          try {
+            submission = JSON.parse(cached);
+            console.log('Loaded submission from sessionStorage');
+          } catch (e) {
+            console.warn('Failed to parse cached submission:', e);
+          }
+        }
+
+        // If not in sessionStorage, fetch from Supabase
+        if (!submission) {
+          console.log('Fetching submission from Supabase:', submissionId);
           const { data, error: fetchError } = await supabase
             .from('exam_submissions')
             .select('*')
             .eq('id', submissionId)
             .single();
-          if (fetchError) throw fetchError;
+          
+          if (fetchError) {
+            console.error('Supabase fetch error:', fetchError);
+            throw new Error(`Failed to fetch submission: ${fetchError.message}`);
+          }
+          
+          if (!data) {
+            throw new Error('Submission not found. It may have expired (24-hour limit).');
+          }
+          
           submission = data;
-          sessionStorage.setItem(`exam_review_${submissionId}`, JSON.stringify(data));
+          // Cache for future access in this session
+          try {
+            sessionStorage.setItem(`exam_review_${submissionId}`, JSON.stringify(data));
+          } catch (e) {
+            console.warn('Failed to cache submission:', e);
+          }
+        }
+
+        if (!submission.student_answers || submission.student_answers.length === 0) {
+          throw new Error('No answers found in this submission.');
         }
 
         setStudentAnswers(submission.student_answers || []);
         const qIds = (submission.student_answers || []).map((s: any) => s.question_id);
+        
+        if (qIds.length === 0) {
+          throw new Error('No questions in this submission.');
+        }
+
         const { data: qData, error: qErr } = await supabase
           .from('questions')
           .select('*')
           .in('id', qIds);
-        if (qErr) throw qErr;
+        
+        if (qErr) {
+          console.error('Questions fetch error:', qErr);
+          throw new Error(`Failed to fetch questions: ${qErr.message}`);
+        }
+        
+        if (!qData || qData.length === 0) {
+          throw new Error('Questions not found in database.');
+        }
         
         // Sort questions to match the order of student_answers
         const orderedQuestions = qIds.map((qId: string) => 
-          qData?.find((q: any) => q.id === qId)
+          qData.find((q: any) => q.id === qId)
         ).filter(Boolean);
+        
+        if (orderedQuestions.length === 0) {
+          throw new Error('Could not match submission questions with database records.');
+        }
         
         setQuestions(orderedQuestions || []);
       } catch (e: any) {
-        setError(e.message || 'Failed to load review');
+        console.error('ExamReview load error:', e);
+        setError(e.message || 'Failed to load review. Please try again.');
       } finally {
         setLoading(false);
       }

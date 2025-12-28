@@ -207,18 +207,6 @@ const ProfileDashboard: React.FC = () => {
       });
   }, [examsSummary, selectedCategory, sortOrder]);
 
-  const [copiedEmail, setCopiedEmail] = useState(false);
-
-  const handleCopySupportEmail = async () => {
-      try {
-          await navigator.clipboard.writeText('crinspire.help@gmail.com');
-          setCopiedEmail(true);
-          setTimeout(() => setCopiedEmail(false), 1500);
-      } catch (err) {
-          console.error('Failed to copy email', err);
-      }
-  };
-
   const handleProfileSave = async () => {
       setSavingProfile(true);
       try {
@@ -617,26 +605,6 @@ const ProfileDashboard: React.FC = () => {
             </div>
         </div>
       </div>
-
-            <div className="border-t border-gray-200 bg-white/70 backdrop-blur-sm">
-                <div className="max-w-7xl mx-auto px-6 py-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-sm text-gray-700">
-                    <div className="space-y-1">
-                        <div className="font-semibold text-gray-900">Need help or have queries?</div>
-                        <div className="text-gray-600">We typically respond within 24 hours on weekdays.</div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                        <button
-                            type="button"
-                            onClick={handleCopySupportEmail}
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white shadow-sm hover:border-[#1F2937] hover:text-[#1F2937] transition-all"
-                            title="Click to copy our support email"
-                        >
-                            <span className="font-semibold">crinspire.help@gmail.com</span>
-                            <span className="text-xs text-gray-500">{copiedEmail ? 'Copied!' : 'Tap to copy'}</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
 
       {isSettingsOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">

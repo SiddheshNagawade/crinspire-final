@@ -314,7 +314,7 @@ const StudentExamInterface: React.FC = () => {
 
         // optional: notify the user briefly that auto-submit is occurring
         try {
-            await handleExamSubmit(responses, timeSpent);
+            await handleExamSubmit(responses, timeSpent, examId, exam);
             navigate('/result');
         } finally {
             // navigation performed immediately after submission attempt

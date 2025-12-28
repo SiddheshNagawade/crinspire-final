@@ -10,6 +10,7 @@ import { loadRazorpayScript, initiatePayment, openRazorpayCheckout, verifyPaymen
 import { SUBSCRIPTION_PLANS } from './config/razorpay';
 import Toast from './components/Toast';
 import { isNATAnswerCorrect } from './utils/natValidation';
+import { isMCQAnswerCorrect } from './utils/mcqValidation';
 
 type SubscriptionTier = 'FREE' | 'PRO_MONTHLY' | 'PRO_SAVER';
 
@@ -715,12 +716,11 @@ const App: React.FC = () => {
         if (!isAttempted) return;
 
         if (q.type === QuestionType.NAT) {
-            // For NAT, use range-aware validation
+            // For NAT, use range-aware validation with OR support
             isCorrect = isNATAnswerCorrect(String(userAns).trim(), String(q.correctAnswer).trim());
         } else if (q.type === QuestionType.MCQ) {
-            if (String(userAns).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase()) {
-                isCorrect = true;
-            }
+            // For MCQ, use OR logic validation
+            isCorrect = isMCQAnswerCorrect(String(userAns).trim(), String(q.correctAnswer).trim());
         } else if (q.type === QuestionType.MSQ) {
             const userArr = Array.isArray(userAns) ? userAns.sort() : [];
             const correctArr = Array.isArray(q.correctAnswer) ? [...q.correctAnswer].sort() : [];
@@ -743,10 +743,15 @@ const App: React.FC = () => {
     return { score, maxScore, accuracy };
   };
 
-  const handleExamSubmit = async (responses: UserResponse, timeSpent: number): Promise<string | null> => {
+  const handleExamSubmit = async (responses: UserResponse, timeSpent: number, examIdOverride?: string, examObject?: ExamPaper): Promise<string | null> => {
     setSessionResponses(responses);
 
-    const selectedExam = exams.find(e => e.id === selectedExamId);
+    // Use override examId if provided (from new StudentExamInterface), otherwise use selectedExamId state
+    const examIdToSubmit = examIdOverride || selectedExamId;
+    
+    // Use provided exam object OR try to find in local state (legacy)
+    const selectedExam = examObject || exams.find(e => e.id === examIdToSubmit);
+    
     if (!selectedExam) {
         console.error("No exam selected during submission");
         navigate('/dashboard');
@@ -795,12 +800,13 @@ const App: React.FC = () => {
             if (q.type === QuestionType.NAT) {
                 selectedValue = typeof userAns === 'string' ? userAns : undefined;
                 correctValue = typeof q.correctAnswer === 'string' ? q.correctAnswer : undefined;
-                // Use range-aware validation for NAT
+                // Use range-aware validation for NAT with OR support
                 isCorrect = isAttempted && selectedValue !== undefined && correctValue !== undefined && isNATAnswerCorrect(selectedValue.trim(), correctValue.trim());
             } else if (q.type === QuestionType.MCQ) {
                 selectedOptionIds = userAns ? [String(userAns)] : [];
                 const correct = correctOptionIds[0];
-                isCorrect = isAttempted && selectedOptionIds.length === 1 && correctOptionIds.includes(selectedOptionIds[0]);
+                // Use OR logic validation for MCQ
+                isCorrect = isAttempted && selectedOptionIds.length === 1 && isMCQAnswerCorrect(selectedOptionIds[0], q.correctAnswer ? String(q.correctAnswer) : '');
                 correctOptionIds = correct ? [correct] : correctOptionIds;
             } else if (q.type === QuestionType.MSQ) {
                 selectedOptionIds = Array.isArray(userAns) ? [...userAns].sort() : [];

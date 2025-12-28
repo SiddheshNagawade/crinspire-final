@@ -4,6 +4,8 @@ import { ArrowLeft, CheckCircle, XCircle, MinusCircle, BarChart2, PieChart, Targ
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { markExamAsCompleted } from '../utils/examUtils';
 import { isNATAnswerCorrect } from '../utils/natValidation';
+import { useQuery } from '@tanstack/react-query';
+import { getExamDetail, examDetailKey } from '../utils/examQueries';
 
 interface CategoryAnalysis {
   name: string;
@@ -37,6 +39,18 @@ const ResultScreen: React.FC = () => {
     }
   }
 
+  // Fetch exam if not found in context/exams list (since App.tsx no longer fetches all exams)
+  const { data: fetchedExam, isLoading: isLoadingExam } = useQuery({
+      queryKey: examDetailKey(activeExamId),
+      queryFn: () => getExamDetail(activeExamId),
+      enabled: !!activeExamId && !exam,
+      staleTime: 1000 * 60 * 30 // 30 mins
+  });
+
+  if (!exam && fetchedExam) {
+      exam = fetchedExam;
+  }
+
   const storedLinkRaw = activeExamId ? localStorage.getItem(`latest_submission_${activeExamId}`) : null;
   let reviewLink: { submissionId: string; expiresAt?: string } | null = null;
   if (storedLinkRaw) {
@@ -62,9 +76,9 @@ const ResultScreen: React.FC = () => {
   }, [activeExamId]);
 
   // Show loading if exams are still being fetched and we have cached data
-  if (!exam && exams.length === 0) {
+  if (!exam && (exams.length === 0 || isLoadingExam)) {
     const cached = sessionStorage.getItem('last_result_data');
-    if (cached) {
+    if (cached || isLoadingExam) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="text-center">
