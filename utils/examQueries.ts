@@ -139,3 +139,124 @@ export async function getExamDetail(examId: string): Promise<ExamPaper> {
     sections: sectionsArray,
   };
 }
+
+export const examSkeletonKey = (examId: string) => ['examSkeleton', examId] as const;
+export const questionDetailKey = (questionId: string) => ['questionDetail', questionId] as const;
+
+/**
+ * Lightweight exam payload: sections + questions metadata ONLY.
+ * Excludes heavy fields: text, image_url, options, option_details.
+ */
+export async function getExamSkeleton(examId: string): Promise<ExamPaper> {
+  // Fetch paper info
+  const { data: paper, error: paperErr } = await supabase
+    .from('papers')
+    .select('*')
+    .eq('id', examId)
+    .maybeSingle();
+  if (paperErr) throw paperErr;
+  if (!paper) throw new Error('Paper not found');
+
+  // Fetch explicit sections ordering if available
+  const { data: sectionsData, error: sectionsError } = await supabase
+    .from('sections')
+    .select('*')
+    .eq('paper_id', examId)
+    .order('position', { ascending: true });
+
+  const hasSectionsTable = !sectionsError && Array.isArray(sectionsData);
+
+  // Fetch questions metadata ONLY
+  // We exclude text, image_url, options, option_details
+  let questions: any[] | null = null;
+  const { data: questionsByPosition, error: questionsByPositionError } = await supabase
+    .from('questions')
+    .select('id, paper_id, section_name, position, type, marks, negative_marks, category, correct_answer')
+    .eq('paper_id', examId)
+    .order('section_name', { ascending: true })
+    .order('position', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (questionsByPositionError) {
+      throw questionsByPositionError;
+  } else {
+    questions = questionsByPosition || [];
+  }
+
+  // Group questions by section
+  const questionsBySection: { [sectionName: string]: any[] } = {};
+  (questions || []).forEach((q: any) => {
+    const secName = q.section_name || 'General';
+    if (!questionsBySection[secName]) questionsBySection[secName] = [];
+    questionsBySection[secName].push({
+      id: q.id,
+      // Minimal fields for navigation/status
+      text: '', // Placeholder
+      imageUrl: undefined,
+      type: q.type,
+      options: [],
+      optionDetails: [],
+      correctAnswer: q.correct_answer,
+      marks: q.marks,
+      negativeMarks: q.negative_marks,
+      category: q.category,
+      position: q.position || 0,
+    });
+  });
+  Object.keys(questionsBySection).forEach((secName) => {
+    questionsBySection[secName].sort((a, b) => (a.position || 0) - (b.position || 0));
+  });
+
+  // Build sections
+  let sectionsArray: any[] = [];
+  if (hasSectionsTable && (sectionsData || []).length > 0) {
+    sectionsArray = (sectionsData || []).map((sec: any) => ({
+      id: sec.id,
+      name: sec.name,
+      questions: questionsBySection[sec.name] || [],
+    }));
+  } else {
+    const sectionNames = Object.keys(questionsBySection).sort();
+    sectionsArray = sectionNames.map((secName, idx) => ({
+      id: `sec-${examId}-${idx}`,
+      name: secName,
+      questions: questionsBySection[secName],
+    }));
+  }
+
+  return {
+    id: paper.id,
+    title: paper.title,
+    year: paper.year,
+    examType: paper.exam_type,
+    durationMinutes: paper.duration_minutes || 120,
+    isPremium: !!paper.is_premium,
+    sections: sectionsArray,
+  };
+}
+
+/**
+ * Fetch full details for a single question.
+ */
+export async function getQuestionDetail(questionId: string): Promise<any> {
+  const { data, error } = await supabase
+    .from('questions')
+    .select('*')
+    .eq('id', questionId)
+    .single();
+  
+  if (error) throw error;
+  
+  return {
+    id: data.id,
+    text: data.text,
+    imageUrl: data.image_url,
+    type: data.type,
+    options: data.options,
+    optionDetails: data.option_details,
+    correctAnswer: data.correct_answer,
+    marks: data.marks,
+    negativeMarks: data.negative_marks,
+    category: data.category,
+  };
+}

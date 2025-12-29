@@ -5,17 +5,20 @@ import { User, Info, ChevronLeft, ChevronRight, AlertTriangle, Lock, Loader2, X 
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { ExamPaper, QuestionStatus, QuestionType, UserResponse, UserQuestionStatus } from '../types';
 import { useBlockNavigation } from '../utils/useBlockNavigation';
-import { useQuery } from '@tanstack/react-query';
-import { getExamDetail, examDetailKey } from '../utils/examQueries';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getExamDetail, examDetailKey, getExamSkeleton, examSkeletonKey, getQuestionDetail, questionDetailKey } from '../utils/examQueries';
 
 const StudentExamInterface: React.FC = () => {
     const { examId } = useParams();
     const navigate = useNavigate();
-    // Fetch exam detail; cache should be warm from instructions prefetch
+    const queryClient = useQueryClient();
+    
+    // Fetch exam skeleton (lightweight)
     const { data: exam, isLoading: loadingExam } = useQuery<ExamPaper>({
-        queryKey: examDetailKey(examId as string),
-        queryFn: () => getExamDetail(examId as string),
+        queryKey: examSkeletonKey(examId as string),
+        queryFn: () => getExamSkeleton(examId as string),
         enabled: !!examId,
+        staleTime: 1000 * 60 * 60, // Cache for 1 hour
     });
     const { handleExamSubmit } = useOutletContext<any>();
 
@@ -37,7 +40,22 @@ const StudentExamInterface: React.FC = () => {
     const hasSections = !!exam && exam.sections && exam.sections.length > 0;
   const currentSection = hasSections ? exam.sections[currentSectionIndex] : null;
   const hasQuestions = currentSection?.questions && currentSection.questions.length > 0;
-  const currentQuestion = hasQuestions ? currentSection.questions[currentQuestionIndex] : null;
+  const skeletonQuestion = hasQuestions ? currentSection.questions[currentQuestionIndex] : null;
+
+  // Fetch full details for the current question
+  const { data: fullQuestionData, isLoading: isLoadingQuestion } = useQuery({
+      queryKey: questionDetailKey(skeletonQuestion?.id as string),
+      queryFn: () => getQuestionDetail(skeletonQuestion?.id as string),
+      enabled: !!skeletonQuestion?.id,
+      staleTime: 1000 * 60 * 60,
+  });
+
+  const currentQuestion = useMemo(() => {
+      if (!skeletonQuestion) return null;
+      if (!fullQuestionData) return skeletonQuestion;
+      return { ...skeletonQuestion, ...fullQuestionData };
+  }, [skeletonQuestion, fullQuestionData]);
+
     // Derived option lists for current question (memoized)
     const richOptions = useMemo(() => currentQuestion?.optionDetails || [], [currentQuestion?.optionDetails]);
     const hasRich = useMemo(() => richOptions && richOptions.length > 0, [richOptions]);
@@ -47,9 +65,22 @@ const StudentExamInterface: React.FC = () => {
             : (currentQuestion?.options || []).map((text: string, idx: number) => ({ opt: { type: 'text', text }, label: String.fromCharCode(65 + idx) }))
     ), [hasRich, richOptions, currentQuestion?.options]);
 
-    // Prefetch current and next question images (including option images)
+    // Prefetch next questions data
     useEffect(() => {
         if (!currentSection) return;
+        
+        // Prefetch next 2 questions DATA
+        for (let offset = 1; offset <= 2; offset++) {
+            const q = currentSection.questions[currentQuestionIndex + offset];
+            if (q) {
+                queryClient.prefetchQuery({
+                    queryKey: questionDetailKey(q.id),
+                    queryFn: () => getQuestionDetail(q.id),
+                    staleTime: 1000 * 60 * 60,
+                });
+            }
+        }
+
         const preload = (url?: string) => {
             if (!url) return;
             const img = new Image();
@@ -57,18 +88,9 @@ const StudentExamInterface: React.FC = () => {
             img.src = url;
         };
         // current question image
-        preload(currentQuestion?.imageUrl);
-        // prefetch next two questions (images + option images)
-        for (let offset = 1; offset <= 2; offset++) {
-            const q = currentSection.questions[currentQuestionIndex + offset];
-            if (!q) break;
-            preload(q.imageUrl);
-            const opts = q.optionDetails || [];
-            for (const opt of opts) {
-                if (opt.type === 'image' && opt.imageData) preload(opt.imageData as string);
-            }
-        }
-    }, [currentSection, currentQuestionIndex, currentQuestion?.imageUrl]);
+        if (currentQuestion?.imageUrl) preload(currentQuestion.imageUrl);
+        
+    }, [currentSection, currentQuestionIndex, currentQuestion?.imageUrl, queryClient]);
   
     // Stable handlers for memoized children
     const onChangeSection = useCallback((idx: number) => {
@@ -573,6 +595,11 @@ const StudentExamInterface: React.FC = () => {
       {/* Header */}
       <header className="h-16 bg-white border-b border-[#E5E7EB] flex items-center justify-between px-6 shrink-0 z-20">
         <div className="flex items-center space-x-4">
+             <div className="flex items-baseline select-none">
+                <span className="font-black text-xl tracking-tight text-[#1F2937]">CRINSPIRE</span>
+                <span className="text-sm text-[#6B7280] font-medium">.com</span>
+             </div>
+             <div className="h-6 w-px bg-[#E5E7EB]"></div>
              <h1 className="font-bold text-lg text-[#111827]">{exam.title}</h1>
              <div className="h-6 w-px bg-[#E5E7EB]"></div>
              <span className="text-[#6B7280] text-sm font-medium">{currentSection.name}</span>
@@ -618,26 +645,37 @@ const StudentExamInterface: React.FC = () => {
            {/* Question Body - Scrollable */}
            <div className="flex-1 overflow-y-auto p-8 relative">
                 <div className="max-w-4xl mx-auto">
-                    <div className="text-lg leading-loose mb-8 text-[#111827] font-medium select-none whitespace-pre-wrap break-words">
-                        {currentQuestion.text}
-                    </div>
-
-                    {currentQuestion.imageUrl && (
-                        <div className="mb-8 flex justify-center">
-                            <img 
-                                src={currentQuestion.imageUrl} 
-                                alt="Question" 
-                                loading="lazy"
-                                className="max-h-[302px] max-w-[680px] object-contain border border-[#E5E7EB] rounded shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
-                                onClick={() => setFullscreenImage(currentQuestion.imageUrl)}
-                            />
+                    {isLoadingQuestion ? (
+                        <div className="space-y-6 animate-pulse">
+                            <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                            <div className="h-4 bg-gray-200 rounded w-full"></div>
+                            <div className="h-4 bg-gray-200 rounded w-5/6"></div>
+                            <div className="h-64 bg-gray-100 rounded w-full mt-8"></div>
                         </div>
-                    )}
+                    ) : (
+                        <>
+                            <div className="text-lg leading-loose mb-8 text-[#111827] font-medium select-none whitespace-pre-wrap break-words">
+                                {currentQuestion.text}
+                            </div>
 
-                    <div className="p-6 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl inline-block min-w-[320px]">
-                        <h4 className="text-xs font-bold text-[#9CA3AF] uppercase mb-2">Your Answer</h4>
-                        {renderQuestionInput()}
-                    </div>
+                            {currentQuestion.imageUrl && (
+                                <div className="mb-8 flex justify-center">
+                                    <img 
+                                        src={currentQuestion.imageUrl} 
+                                        alt="Question" 
+                                        loading="lazy"
+                                        className="max-h-[302px] max-w-[680px] object-contain border border-[#E5E7EB] rounded shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
+                                        onClick={() => setFullscreenImage(currentQuestion.imageUrl)}
+                                    />
+                                </div>
+                            )}
+
+                            <div className="p-6 bg-[#F8F9FA] border border-[#E5E7EB] rounded-xl inline-block min-w-[320px]">
+                                <h4 className="text-xs font-bold text-[#9CA3AF] uppercase mb-2">Your Answer</h4>
+                                {renderQuestionInput()}
+                            </div>
+                        </>
+                    )}
                 </div>
                 
                 {/* Collapsible Trigger */}
