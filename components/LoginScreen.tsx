@@ -117,7 +117,7 @@ const LoginScreen: React.FC = () => {
             if (resetError) {
                 setError(resetError.message);
             } else {
-                setSuccessMsg('Password reset link sent! Check your email.');
+                setSuccessMsg('Password reset link sent! Check your email (and spam folder).');
         
                 // Clear email and reset mode after 2 seconds
                 setTimeout(() => {
@@ -170,7 +170,7 @@ const LoginScreen: React.FC = () => {
                 if (data && data.user) {
                     // Fill profile details (email, full_name, age)
                     await upsertProfileFromClient(data.user);
-                    setSuccessMsg("✅ Registration successful! Check your email to verify your account, then you can login.");
+                    setSuccessMsg("✅ Registration successful! Check your email (and spam folder) to verify your account, then you can login.");
                     setAuthMode('LOGIN');
                     // Clear form
                     setSName('');
@@ -179,7 +179,7 @@ const LoginScreen: React.FC = () => {
                     setSPassword('');
                     setSConfirmPass('');
                 } else {
-                    setSuccessMsg('✅ Registration successful! Check your email to verify your account, then you can login.');
+                    setSuccessMsg('✅ Registration successful! Check your email (and spam folder) to verify your account, then you can login.');
                     setAuthMode('LOGIN');
                 }
             }
