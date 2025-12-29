@@ -295,7 +295,7 @@ const ProfileDashboard: React.FC = () => {
                  <h4 className="font-bold text-md mb-1">Unlock Pro</h4>
                  <p className="text-[10px] text-gray-400 mb-3">Get access to all papers, detailed solutions, and advanced analytics.</p>
                       <button 
-                          onClick={() => handleUpgrade('PRO_MONTHLY')}
+                          onClick={() => navigate('/pricing')}
                     className="w-full py-2 bg-[#FCD34D] text-[#78350F] font-bold rounded-lg text-xs hover:bg-[#FBBF24] transition-colors"
                  >
                     Upgrade Now
@@ -390,7 +390,7 @@ const ProfileDashboard: React.FC = () => {
                                 <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center p-4 text-center">
                                     <Shield size={20} className="text-gray-400 mb-2" />
                                         <button 
-                                        onClick={(e) => { e.stopPropagation(); handleUpgrade('PRO_MONTHLY'); }}
+                                        onClick={(e) => { e.stopPropagation(); navigate('/pricing'); }}
                                         className="text-xs font-bold bg-[#1F2937] text-white px-3 py-1.5 rounded-lg hover:bg-black transition-colors"
                                     >
                                         Unlock Premium

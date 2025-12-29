@@ -987,8 +987,8 @@ const App: React.FC = () => {
           {isAuthenticatedStudent ? (
             <>
               {subscription === 'FREE' && (
-                <button onClick={() => navigate('/pricing')} className="hidden md:flex items-center gap-2 text-xs font-bold bg-[#FCD34D]/20 text-[#B45309] px-3 py-1.5 rounded-full border border-[#FCD34D]">
-                  <Crown size={14}/> Upgrade to Pro
+                <button onClick={() => navigate('/pricing')} className="text-sm font-medium text-[#1F2937] hover:text-[#8AA624] transition-colors">
+                  Pricing
                 </button>
               )}
               <button onClick={() => navigate('/dashboard')} className="text-sm font-medium text-[#1F2937] hover:text-[#8AA624] transition-colors flex items-center gap-2 px-3 py-1.5 rounded hover:bg-[#F3F4F6]">

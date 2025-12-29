@@ -1,57 +1,63 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { useNavigate } from 'react-router-dom';
+import { upsertProfileFromClient } from '../utils/profile';
 
 const AuthRedirectHandler = () => {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState('Finalizing login...');
 
   useEffect(() => {
-    // If Supabase appended type=recovery, route immediately
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const typeParam = params.get('type');
-      if (typeParam === 'recovery') {
-        navigate('/update-password');
-        setLoading(false);
-        return;
+    const handleAuth = async () => {
+      try {
+        // 1. Check if we already have a session (Supabase client handles the hash automatically)
+        const { data: { session }, error } = await supabase.auth.getSession();
+
+        if (error) throw error;
+
+        if (session) {
+          // Ensure profile exists
+          if (session.user) {
+             await upsertProfileFromClient(session.user);
+          }
+          navigate('/dashboard');
+          return;
+        }
+
+        // 2. If no session yet, listen for the event
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if (event === 'SIGNED_IN' && session) {
+            if (session.user) {
+                await upsertProfileFromClient(session.user);
+            }
+            navigate('/dashboard');
+          } else if (event === 'PASSWORD_RECOVERY') {
+            navigate('/update-password');
+          }
+        });
+
+        return () => {
+          subscription.unsubscribe();
+        };
+
+      } catch (error: any) {
+        console.error('Auth redirect error:', error);
+        setStatus(`Login failed: ${error.message}`);
+        setTimeout(() => navigate('/login'), 3000);
       }
-    } catch {}
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      // User arrived from a magic link or email-based auth
-      if (event === 'SIGNED_IN' && session) {
-        // Normal magic-link / email-confirmation flow
-        navigate('/dashboard');
-      }
-
-      // User clicked a "reset password" email link
-      else if (event === 'PASSWORD_RECOVERY') {
-        navigate('/update-password');
-      }
-
-      setLoading(false);
-    });
-
-    return () => {
-      subscription.unsubscribe();
     };
+
+    handleAuth();
   }, [navigate]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="text-lg font-semibold text-gray-700">Authenticating…</div>
-          <div className="text-sm text-gray-500 mt-2">Please wait.</div>
-        </div>
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+        <div className="text-lg font-semibold text-gray-700">{status}</div>
       </div>
-    );
-  }
-
-  return null;
+    </div>
+  );
 };
 
 export default AuthRedirectHandler;

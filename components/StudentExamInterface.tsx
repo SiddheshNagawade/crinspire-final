@@ -18,7 +18,7 @@ const StudentExamInterface: React.FC = () => {
         queryKey: examSkeletonKey(examId as string),
         queryFn: () => getExamSkeleton(examId as string),
         enabled: !!examId,
-        staleTime: 1000 * 60 * 60, // Cache for 1 hour
+        staleTime: 1000 * 60 * 60 * 5, // Cache for 5 hours (covers 3hr exam + buffer)
     });
     const { handleExamSubmit } = useOutletContext<any>();
 
@@ -47,7 +47,7 @@ const StudentExamInterface: React.FC = () => {
       queryKey: questionDetailKey(skeletonQuestion?.id as string),
       queryFn: () => getQuestionDetail(skeletonQuestion?.id as string),
       enabled: !!skeletonQuestion?.id,
-      staleTime: 1000 * 60 * 60,
+      staleTime: 1000 * 60 * 60 * 5,
   });
 
   const currentQuestion = useMemo(() => {
@@ -76,7 +76,7 @@ const StudentExamInterface: React.FC = () => {
                 queryClient.prefetchQuery({
                     queryKey: questionDetailKey(q.id),
                     queryFn: () => getQuestionDetail(q.id),
-                    staleTime: 1000 * 60 * 60,
+                    staleTime: 1000 * 60 * 60 * 5,
                 });
             }
         }
@@ -220,22 +220,54 @@ const StudentExamInterface: React.FC = () => {
         });
     }, []);
   
-  // Initialization
+  // Initialization & Persistence Load
     useEffect(() => {
         if (!exam || !exam.sections) return;
 
-    // Initialize all questions as not visited
-    const initialStatus: UserQuestionStatus = {};
-    exam.sections.forEach(sec => {
-      sec.questions.forEach(q => {
-        initialStatus[q.id] = QuestionStatus.NOT_VISITED;
-      });
-    });
-    setStatus(initialStatus);
-    
-    // Reset timer when exam loads
-    setTimeLeft(exam.durationMinutes ? exam.durationMinutes * 60 : 7200);
-  }, [exam]);
+        const savedState = localStorage.getItem(`exam_progress_${examId}`);
+        if (savedState) {
+            try {
+                const parsed = JSON.parse(savedState);
+                setResponses(parsed.responses || {});
+                setStatus(parsed.status || {});
+                if (parsed.timeLeft) setTimeLeft(parsed.timeLeft);
+                if (parsed.currentSectionIndex !== undefined) setCurrentSectionIndex(parsed.currentSectionIndex);
+                if (parsed.currentQuestionIndex !== undefined) setCurrentQuestionIndex(parsed.currentQuestionIndex);
+                return;
+            } catch (e) {
+                console.error("Failed to load saved exam state", e);
+            }
+        }
+
+        // Initialize all questions as not visited
+        const initialStatus: UserQuestionStatus = {};
+        exam.sections.forEach(sec => {
+            sec.questions.forEach(q => {
+                initialStatus[q.id] = QuestionStatus.NOT_VISITED;
+            });
+        });
+        setStatus(initialStatus);
+        
+        // Reset timer when exam loads
+        setTimeLeft(exam.durationMinutes ? exam.durationMinutes * 60 : 7200);
+    }, [exam, examId]);
+
+    // Persistence: Save responses and status immediately
+    useEffect(() => {
+        if (!exam || !examId) return;
+        const existing = localStorage.getItem(`exam_progress_${examId}`);
+        const parsed = existing ? JSON.parse(existing) : {};
+        
+        const newState = {
+            ...parsed,
+            responses,
+            status,
+            currentSectionIndex,
+            currentQuestionIndex,
+            lastSaved: Date.now()
+        };
+        localStorage.setItem(`exam_progress_${examId}`, JSON.stringify(newState));
+    }, [responses, status, currentSectionIndex, currentQuestionIndex, examId]);
 
   // Update status when visiting a question
     useEffect(() => {
@@ -256,7 +288,19 @@ const StudentExamInterface: React.FC = () => {
 
         const timer = setInterval(() => {
             setTimeLeft(prev => {
-                if (prev <= 0) {
+                const newVal = prev - 1;
+
+                // Save time every 5 seconds to localStorage
+                if (newVal % 5 === 0 && examId) {
+                    const existing = localStorage.getItem(`exam_progress_${examId}`);
+                    const parsed = existing ? JSON.parse(existing) : {};
+                    localStorage.setItem(`exam_progress_${examId}`, JSON.stringify({
+                        ...parsed,
+                        timeLeft: newVal
+                    }));
+                }
+
+                if (newVal <= 0) {
                     clearInterval(timer);
                     // ensure submit only once
                     if (!submittedRef.current) {
@@ -265,11 +309,11 @@ const StudentExamInterface: React.FC = () => {
                     }
                     return 0;
                 }
-                return prev - 1;
+                return newVal;
             });
         }, 1000);
         return () => clearInterval(timer);
-    }, [hasQuestions]);
+    }, [hasQuestions, examId]);
 
   // --- Navigation Guards ---
   
@@ -327,6 +371,11 @@ const StudentExamInterface: React.FC = () => {
         if (submittedRef.current && isSubmitting) return;
         submittedRef.current = true;
         setIsSubmitting(true);
+
+        // Clear saved progress
+        if (examId) {
+            localStorage.removeItem(`exam_progress_${examId}`);
+        }
 
         // close any open confirm modal first
         setIsSubmitModalOpen(false);
@@ -596,7 +645,7 @@ const StudentExamInterface: React.FC = () => {
       <header className="h-16 bg-white border-b border-[#E5E7EB] flex items-center justify-between px-6 shrink-0 z-20">
         <div className="flex items-center space-x-4">
              <div className="flex items-baseline select-none">
-                <span className="font-black text-xl tracking-tight text-[#1F2937]">CRINSPIRE</span>
+                <span className="text-xl font-bold text-[#1F2937]" style={{ fontFamily: 'Chokokutai' }}>Crinspire</span>
                 <span className="text-sm text-[#6B7280] font-medium">.com</span>
              </div>
              <div className="h-6 w-px bg-[#E5E7EB]"></div>
